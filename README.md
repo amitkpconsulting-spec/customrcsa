@@ -186,11 +186,11 @@ Start.bat
 
 ## 8. License
 
-This project is licensed under the **MIT License**.
-
-```
 Technoscope (Amit Kumar Pandey) Proprietary Source-Available License
 Copyright (c) 2026 Technoscope (Amit Kumar Pandey). All Rights Reserved.
+
+```
+
 
 This software and associated documentation files (the "Software") are the proprietary property of Technoscope (Amit Kumar Pandey).
 
