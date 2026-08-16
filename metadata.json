@@ -1,0 +1,7 @@
+{
+  "name": "Custom RCSA by Technoscope",
+  "description": "Enterprise Risk and Control Self-Assessment (RCSA) platform supporting customizable 3x3 and 5x5 risk matrices, industry sector risk profiles, AI/PII weighting modifiers, environment operating modes, NIST SP 800-53 Rev. 5, CSA CCM v4.1.0, and CAIQ v4.1.0 questionnaires.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

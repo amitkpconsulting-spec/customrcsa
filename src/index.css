@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg: #111111;
+    --ink: #ffffff;
+    --accent: #f5ff00;
+    --surface: #1a1a1a;
+    --surface-elevated: #222222;
+    --border: 2px solid #222222;
+    --border-color: #262626;
+    --border-subtle: #1f1f1f;
+    --text-muted: #888888;
+    --text-dim: #555555;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, .font-syne, .brand-title {
+    font-family: 'Syne', sans-serif;
+    letter-spacing: -0.02em;
+  }
+
+  .font-mono, .label, .tag, code, pre, th, .metric-id {
+    font-family: 'Space Mono', 'JetBrains Mono', monospace;
+  }
+
+  ::selection {
+    background: #f5ff00;
+    color: #000000;
+  }
+}
+
+/* Industrial Systematic Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #111111;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border-radius: 0px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #f5ff00;
+}
+
+/* Industrial Component Helpers */
+.industrial-border {
+  border: 1px solid #262626;
+}
+
+.industrial-border-thick {
+  border: 2px solid #262626;
+}
+
+.industrial-cell {
+  background-color: #161616;
+  border: 1px solid #262626;
+}
+
+.industrial-cell:hover {
+  border-color: #383838;
+}
+
+.industrial-accent-box {
+  background-color: #181804;
+  border: 1px solid #4d4f00;
+}
+
+.label-mono {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: #888888;
+}
+
+@media print {
+  header, nav, aside, button, .no-print {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+    color: black !important;
+  }
+}
