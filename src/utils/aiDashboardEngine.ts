@@ -7,10 +7,29 @@ import {
   AITrendItem,
   AIWriteupType,
   AIWriteupResult,
+  AIMitigationDomainResult,
+  AIMitigationSuggestion,
+  AIMitigationStrategyType,
   RiskDomain,
 } from '../types';
 import { computeDomainSummaries, getControlRiskLevel } from './riskCalculations';
 import { SECTOR_PROFILES } from '../data/sectorProfiles';
+
+// In-memory cache for generated AI results to prevent redundant burst requests and rapid quota exhaustion
+const aiCache = new Map<string, { timestamp: number; data: any }>();
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache
+
+function getCachedResult<T>(key: string): T | null {
+  const item = aiCache.get(key);
+  if (item && Date.now() - item.timestamp < CACHE_TTL_MS) {
+    return item.data as T;
+  }
+  return null;
+}
+
+function setCachedResult<T>(key: string, data: T): void {
+  aiCache.set(key, { timestamp: Date.now(), data });
+}
 
 // Helper to get engine label
 export function getAIEngineLabel(settings?: AISettings): string {
@@ -37,83 +56,40 @@ export async function generateAISummary(
   assessment: RCSAPayload,
   settings?: AISettings
 ): Promise<AIExecutiveSummary> {
+  const cacheKey = `summary_${assessment.assessmentId}_${assessment.controls.length}_${settings?.mode}_${settings?.isAirGappedMode}`;
+  const cached = getCachedResult<AIExecutiveSummary>(cacheKey);
+  if (cached) return cached;
+
   const mode = settings?.mode || 'gemini';
   const isAirGapped = settings?.isAirGappedMode || mode === 'offline_expert';
 
-  // Try calling server-side API if Gemini mode
-  if (mode === 'gemini' && !isAirGapped) {
+  // Try calling unified server-side API (Gemini, Ollama, LM Studio, AnythingLLM)
+  if (!isAirGapped) {
     try {
       const res = await fetch('/api/ai/summary', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assessment }),
+        body: JSON.stringify({ assessment, aiSettings: settings }),
       });
       if (res.ok) {
         const json = await res.json();
         if (json.data && json.success) {
-          return {
+          const result: AIExecutiveSummary = {
             ...json.data,
-            engineUsed: getAIEngineLabel(settings),
+            engineUsed: json.source || getAIEngineLabel(settings),
             generatedTimestamp: new Date().toISOString(),
           };
+          setCachedResult(cacheKey, result);
+          return result;
         }
       }
     } catch (e) {
-      console.warn('Gemini summary API failed, using local engine:', e);
-    }
-  }
-
-  // Try LM Studio local
-  if (mode === 'local_lmstudio' && !isAirGapped && settings?.lmStudioEndpoint) {
-    try {
-      const ep = `${settings.lmStudioEndpoint.replace(/\/$/, '')}/chat/completions`;
-      const res = await fetch(ep, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: settings.lmStudioModel || 'local-model',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are a NIST SP 800-53 Rev. 5 Lead Assessor. Respond in JSON with an executive summary containing: postureGrade, headline, keyRiskDrivers, strengthsIdentified, criticalVulnerabilities, boardTalkingPoints, auditReadinessScore, regulatoryExposureSummary.',
-            },
-            {
-              role: 'user',
-              content: `System: ${assessment.organizationProfile.targetSystem}, Sector: ${assessment.organizationProfile.sector}. Number of controls: ${assessment.controls.length}. High risk controls: ${assessment.controls.filter(c => c.residualRisk >= 10).length}.`,
-            },
-          ],
-          temperature: 0.2,
-        }),
-      });
-      if (res.ok) {
-        const json = await res.json();
-        const content = json.choices?.[0]?.message?.content;
-        if (content) {
-          try {
-            const parsed = JSON.parse(content);
-            if (parsed.headline && parsed.postureGrade) {
-              return {
-                engineUsed: getAIEngineLabel(settings),
-                generatedTimestamp: new Date().toISOString(),
-                postureGrade: parsed.postureGrade || 'B',
-                headline: parsed.headline,
-                keyRiskDrivers: parsed.keyRiskDrivers || [],
-                strengthsIdentified: parsed.strengthsIdentified || [],
-                criticalVulnerabilities: parsed.criticalVulnerabilities || [],
-                boardTalkingPoints: parsed.boardTalkingPoints || [],
-                auditReadinessScore: Number(parsed.auditReadinessScore) || 78,
-                regulatoryExposureSummary: parsed.regulatoryExposureSummary || '',
-              };
-            }
-          } catch {}
-        }
-      }
-    } catch (e) {
-      console.warn('LM Studio local summary call failed, falling back:', e);
+      console.warn('AI summary API failed, using local engine:', e);
     }
   }
 
   // Air-Gapped / Heuristic Fallback Engine
+
   const controls = assessment.controls;
   const total = controls.length;
   const avgResidual = controls.reduce((s, c) => s + c.residualRisk, 0) / (total || 1);
@@ -132,7 +108,7 @@ export async function generateAISummary(
 
   const readinessScore = Math.max(20, Math.min(98, Math.round(avgCEF * 100 - criticals.length * 8)));
 
-  return {
+  const result: AIExecutiveSummary = {
     engineUsed: getAIEngineLabel(settings),
     generatedTimestamp: new Date().toISOString(),
     postureGrade,
@@ -158,6 +134,8 @@ export async function generateAISummary(
     auditReadinessScore: readinessScore,
     regulatoryExposureSummary: `System boundary '${assessment.organizationProfile.targetSystem}' exhibits moderate-to-high defensibility against ${sector.regulatoryFrameworks.join(' and ')}. Immediate closure of ${criticals.length + highs.length} elevated controls is required to prevent regulatory audit findings.`,
   };
+  setCachedResult(cacheKey, result);
+  return result;
 }
 
 // -------------------------------------------------------------
@@ -168,28 +146,33 @@ export async function generateAIHeatmapPrediction(
   settings?: AISettings,
   scenario: string = 'Current Operating Trajectory'
 ): Promise<AIHeatmapPrediction> {
-  const mode = settings?.mode || 'gemini';
-  const isAirGapped = settings?.isAirGappedMode || mode === 'offline_expert';
+  const cacheKey = `heatmap_${assessment.assessmentId}_${assessment.controls.length}_${scenario}_${settings?.mode}_${settings?.isAirGappedMode}`;
+  const cached = getCachedResult<AIHeatmapPrediction>(cacheKey);
+  if (cached) return cached;
 
-  if (mode === 'gemini' && !isAirGapped) {
+  const isAirGapped = settings?.isAirGappedMode || settings?.mode === 'offline_expert';
+
+  if (!isAirGapped) {
     try {
       const res = await fetch('/api/ai/heatmap-prediction', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assessment, scenario }),
+        body: JSON.stringify({ assessment, scenario, aiSettings: settings }),
       });
       if (res.ok) {
         const json = await res.json();
         if (json.data && json.success) {
-          return {
+          const result: AIHeatmapPrediction = {
             ...json.data,
-            engineUsed: getAIEngineLabel(settings),
+            engineUsed: json.source || getAIEngineLabel(settings),
             generatedTimestamp: new Date().toISOString(),
           };
+          setCachedResult(cacheKey, result);
+          return result;
         }
       }
     } catch (e) {
-      console.warn('Gemini heatmap prediction API failed, using local model:', e);
+      console.warn('AI heatmap prediction API failed, using local model:', e);
     }
   }
 
@@ -221,7 +204,6 @@ export async function generateAIHeatmapPrediction(
       vector = '3rd party subprocessor dependency & unmonitored API integrations';
       trend = 'INCREASING';
     } else {
-      // Current trajectory: Slight gradual improvement if assessed, otherwise steady
       multiplier = 0.92;
       vector = 'Planned control hardening & quarterly patch rotation';
       trend = 'DECREASING';
@@ -240,9 +222,8 @@ export async function generateAIHeatmapPrediction(
     };
   });
 
-  // Identify volatile controls
   const sortedByRisk = [...controls].sort((a, b) => b.residualRisk - a.residualRisk);
-  const volatileControls = sortedByRisk.slice(0, 5).map((c, i) => {
+  const volatileControls = sortedByRisk.slice(0, 5).map((c) => {
     const isHigh = c.residualRisk >= 10;
     const shift = isHigh ? 1.8 : 0.8;
     return {
@@ -264,7 +245,7 @@ export async function generateAIHeatmapPrediction(
   const projectedCrit30 = baselineCriticals + (scenario.includes('Ransomware') ? 2 : 0);
   const projectedCrit90 = baselineCriticals + (scenario.includes('Ransomware') ? 3 : scenario.includes('Supply') ? 2 : 0);
 
-  return {
+  const result: AIHeatmapPrediction = {
     engineUsed: getAIEngineLabel(settings),
     generatedTimestamp: new Date().toISOString(),
     forecastScenario: scenario,
@@ -281,6 +262,8 @@ export async function generateAIHeatmapPrediction(
       'Conduct table-top incident response simulation for critical infrastructure threat scenarios.',
     ],
   };
+  setCachedResult(cacheKey, result);
+  return result;
 }
 
 // -------------------------------------------------------------
@@ -290,28 +273,33 @@ export async function generateAIRiskRemediationSynthesis(
   assessment: RCSAPayload,
   settings?: AISettings
 ): Promise<AIRiskRemediationSynthesis> {
-  const mode = settings?.mode || 'gemini';
-  const isAirGapped = settings?.isAirGappedMode || mode === 'offline_expert';
+  const cacheKey = `risk_synth_${assessment.assessmentId}_${assessment.controls.length}_${settings?.mode}_${settings?.isAirGappedMode}`;
+  const cached = getCachedResult<AIRiskRemediationSynthesis>(cacheKey);
+  if (cached) return cached;
 
-  if (mode === 'gemini' && !isAirGapped) {
+  const isAirGapped = settings?.isAirGappedMode || settings?.mode === 'offline_expert';
+
+  if (!isAirGapped) {
     try {
       const res = await fetch('/api/ai/risk-remediation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assessment }),
+        body: JSON.stringify({ assessment, aiSettings: settings }),
       });
       if (res.ok) {
         const json = await res.json();
         if (json.data && json.success) {
-          return {
+          const result: AIRiskRemediationSynthesis = {
             ...json.data,
-            engineUsed: getAIEngineLabel(settings),
+            engineUsed: json.source || getAIEngineLabel(settings),
             generatedTimestamp: new Date().toISOString(),
           };
+          setCachedResult(cacheKey, result);
+          return result;
         }
       }
     } catch (e) {
-      console.warn('Gemini risk remediation API failed, using local engine:', e);
+      console.warn('AI risk remediation API failed, using local engine:', e);
     }
   }
 
@@ -348,7 +336,7 @@ export async function generateAIRiskRemediationSynthesis(
     };
   });
 
-  return {
+  const result: AIRiskRemediationSynthesis = {
     engineUsed: getAIEngineLabel(settings),
     generatedTimestamp: new Date().toISOString(),
     totalDeficienciesAnalyzed: targetList.length,
@@ -357,6 +345,8 @@ export async function generateAIRiskRemediationSynthesis(
     overallProjectedResidualReduction: 54, // %
     strategicGuidance: `Addressing the top 3 high-priority synthesis items will resolve 72% of aggregated system risk, drastically reducing potential regulatory penalty exposure under active sector mandates.`,
   };
+  setCachedResult(cacheKey, result);
+  return result;
 }
 
 // -------------------------------------------------------------
@@ -366,24 +356,28 @@ export async function generateAITrends(
   assessment: RCSAPayload,
   settings?: AISettings
 ): Promise<AITrendItem[]> {
-  const mode = settings?.mode || 'gemini';
-  const isAirGapped = settings?.isAirGappedMode || mode === 'offline_expert';
+  const cacheKey = `trends_${assessment.assessmentId}_${assessment.organizationProfile.sector}_${settings?.mode}_${settings?.isAirGappedMode}`;
+  const cached = getCachedResult<AITrendItem[]>(cacheKey);
+  if (cached) return cached;
 
-  if (mode === 'gemini' && !isAirGapped) {
+  const isAirGapped = settings?.isAirGappedMode || settings?.mode === 'offline_expert';
+
+  if (!isAirGapped) {
     try {
       const res = await fetch('/api/ai/trends', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assessment }),
+        body: JSON.stringify({ assessment, aiSettings: settings }),
       });
       if (res.ok) {
         const json = await res.json();
         if (json.data && Array.isArray(json.data) && json.success) {
+          setCachedResult(cacheKey, json.data);
           return json.data;
         }
       }
     } catch (e) {
-      console.warn('Gemini trends API failed, using local engine:', e);
+      console.warn('AI trends API failed, using local engine:', e);
     }
   }
 
@@ -465,28 +459,33 @@ export async function generateAIWriteup(
   settings?: AISettings,
   customInstructions?: string
 ): Promise<AIWriteupResult> {
-  const mode = settings?.mode || 'gemini';
-  const isAirGapped = settings?.isAirGappedMode || mode === 'offline_expert';
+  const cacheKey = `writeup_${assessment.assessmentId}_${writeupType}_${(customInstructions || '').slice(0, 30)}_${settings?.mode}_${settings?.isAirGappedMode}`;
+  const cached = getCachedResult<AIWriteupResult>(cacheKey);
+  if (cached) return cached;
 
-  if (mode === 'gemini' && !isAirGapped) {
+  const isAirGapped = settings?.isAirGappedMode || settings?.mode === 'offline_expert';
+
+  if (!isAirGapped) {
     try {
       const res = await fetch('/api/ai/writeup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ writeupType, assessment, customInstructions }),
+        body: JSON.stringify({ writeupType, assessment, customInstructions, aiSettings: settings }),
       });
       if (res.ok) {
         const json = await res.json();
         if (json.data && json.success) {
-          return {
+          const result: AIWriteupResult = {
             ...json.data,
-            engineUsed: getAIEngineLabel(settings),
+            engineUsed: json.source || getAIEngineLabel(settings),
             dateGenerated: new Date().toISOString(),
           };
+          setCachedResult(cacheKey, result);
+          return result;
         }
       }
     } catch (e) {
-      console.warn('Gemini writeup API failed, using local engine:', e);
+      console.warn('AI writeup API failed, using local engine:', e);
     }
   }
 
@@ -646,4 +645,310 @@ All findings have been logged into the central remediation tracking system.`;
     executiveSummary,
     keyActionItems,
   };
+}
+
+// -------------------------------------------------------------
+// 6. PROACTIVE MITIGATION SUGGESTIONS (GEMINI & EXPERT ENGINE)
+// -------------------------------------------------------------
+export async function generateAIMitigationSuggestions(
+  assessment: RCSAPayload,
+  settings?: AISettings,
+  domain: RiskDomain | 'ALL' = 'ALL',
+  strategyFilter: string = 'ALL'
+): Promise<AIMitigationDomainResult> {
+  const cacheKey = `mitigations_${assessment.assessmentId}_${domain}_${strategyFilter}_${settings?.mode}_${settings?.isAirGappedMode}`;
+  const cached = getCachedResult<AIMitigationDomainResult>(cacheKey);
+  if (cached) return cached;
+
+  const isAirGapped = settings?.isAirGappedMode || settings?.mode === 'offline_expert';
+  const sector =
+    SECTOR_PROFILES[assessment.organizationProfile.sector] || SECTOR_PROFILES.Technology;
+
+  // 1. Try AI API via Backend Server (Gemini, Ollama, LM Studio, AnythingLLM)
+  if (!isAirGapped) {
+    try {
+      const res = await fetch('/api/gemini/mitigation-suggestions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assessment,
+          domain,
+          sector: sector.name,
+          strategyFilter,
+          aiSettings: settings,
+        }),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        if (json.data && json.success) {
+          const rawData = json.data;
+          const result: AIMitigationDomainResult = {
+            engineUsed: json.source || getAIEngineLabel(settings),
+            generatedTimestamp: new Date().toISOString(),
+            domain,
+            sector: sector.name,
+            domainExecutiveBrief:
+              rawData.domainExecutiveBrief ||
+              `Proactive security mitigation posture for ${domain === 'ALL' ? 'Enterprise Core' : domain} under ${sector.name} baseline.`,
+            threatContext:
+              rawData.threatContext ||
+              `Adversary vectors target credential replay, lateral movement, and unmonitored service accounts in ${assessment.organizationProfile.targetSystem}.`,
+            overallMaturityScore: rawData.overallMaturityScore ?? 78,
+            proactiveVsReactiveRatio: rawData.proactiveVsReactiveRatio || '75% Proactive / 25% Reactive',
+            totalSuggestions: rawData.suggestions?.length || 0,
+            estimatedAggregateRiskReduction: rawData.estimatedAggregateRiskReduction ?? 36.5,
+            suggestions: (rawData.suggestions || []).map((s: any, idx: number) => ({
+              id: s.id || `MIT-${domain.substring(0, 3).toUpperCase()}-${idx + 1}`,
+              targetControlId: s.targetControlId || 'AC-2',
+              controlTitle: s.controlTitle || 'Account Management',
+              domain: s.domain || (domain === 'ALL' ? 'Cybersecurity' : domain),
+              strategyType: s.strategyType || 'ZERO_TRUST',
+              title: s.title || 'Proactive Hardening & Automated Safeguard',
+              urgency: s.urgency || 'HIGH',
+              inherentRisk: s.inherentRisk ?? 16.0,
+              currentResidualRisk: s.currentResidualRisk ?? 10.4,
+              projectedResidualRisk: s.projectedResidualRisk ?? 4.2,
+              estimatedCEFImprovement: s.estimatedCEFImprovement ?? 0.45,
+              vulnerabilityAddressed: s.vulnerabilityAddressed || 'Identified control gap or deficiency in current assessment baseline.',
+              proactiveStrategy: s.proactiveStrategy || 'Forward-looking zero-trust safeguard eliminating lateral propagation.',
+              technicalImplementation: s.technicalImplementation || 'Implement hardware token MFA, automated key rotation, and granular RBAC policies.',
+              configurationSnippet: s.configurationSnippet || '# CLI or Policy Hardening\nauth required pam_fido2.so authfile=/etc/fido2.keys\nenforce_mfa: true\nsession_idle_timeout: 900',
+              compensatingSafeguard: s.compensatingSafeguard || 'Active behavioral anomaly monitoring and dual-operator sign-off.',
+              defenseMultiplier: s.defenseMultiplier || 'Prevents lateral pivot from compromised endpoints into core transaction processing.',
+              auditValidationMetric: s.auditValidationMetric || 'Continuous SIEM telemetry audit logs and automated CEF telemetry ingestion.',
+              implementationCost: s.implementationCost || 'MEDIUM (1-2 Weeks)',
+              status: 'PROPOSED',
+            })),
+            frameworkMappings: rawData.frameworkMappings || {
+              nistSp80053: ['AC-2', 'IA-2', 'SC-8', 'SC-13', 'SI-4', 'AU-6'],
+              csaCcm: ['IAM-01', 'DSI-02', 'EKM-03', 'SEF-04'],
+              iso27001: ['A.9.2.1', 'A.9.4.2', 'A.10.1.1', 'A.12.4.1'],
+            },
+          };
+          setCachedResult(cacheKey, result);
+          return result;
+        }
+      }
+    } catch (e) {
+      console.warn('Gemini Mitigation Suggestions API error, falling back to expert heuristics engine:', e);
+    }
+  }
+
+  // 2. Intelligent Domain-Specific Rule Engine (Offline / Air-Gapped / Fallback)
+  const domainControls = (assessment.controls || []).filter((c) =>
+    domain === 'ALL' ? true : c.domain === domain
+  );
+
+  const totalControls = domainControls.length;
+  const highRiskControls = domainControls.filter((c) => c.residualRisk >= 8.0);
+  const avgResidual = totalControls > 0
+    ? Number((domainControls.reduce((acc, c) => acc + c.residualRisk, 0) / totalControls).toFixed(1))
+    : 8.5;
+  const avgCEF = totalControls > 0
+    ? Math.round((domainControls.reduce((acc, c) => acc + (c.calculatedCEF || 0.65), 0) / totalControls) * 100)
+    : 65;
+
+  const domainBriefs: Record<string, { brief: string; threat: string; ratio: string; score: number }> = {
+    Cybersecurity: {
+      brief: `Continuous telemetry and hardware-backed Zero-Trust enforcement are required to insulate ${assessment.organizationProfile.targetSystem} against state-level ransomware campaigns and API credential stuffing.`,
+      threat: 'Exploitation of legacy token exchanges, unsegmented container VPCs, and privileged credential escalation.',
+      ratio: '80% Proactive / 20% Reactive',
+      score: Math.min(95, Math.max(50, avgCEF + 10)),
+    },
+    Privacy: {
+      brief: `Architectural data minimization, automated DSAR ingestion, and cryptographic pseudonymization must be established to guarantee defensibility under global statutory regimes.`,
+      threat: 'Cross-border telemetry leakage, unclassified secondary data warehouses, and third-party SDK analytics exfiltration.',
+      ratio: '85% Proactive / 15% Reactive',
+      score: Math.min(95, Math.max(50, avgCEF + 8)),
+    },
+    'Information Security': {
+      brief: `End-to-end data envelope encryption, WORM audit trails, and automated key rotation isolate corporate assets against insider threat and exfiltration vectors.`,
+      threat: 'Unencrypted object stores, static API keys in CI/CD pipelines, and unauthorized database dump downloads.',
+      ratio: '75% Proactive / 25% Reactive',
+      score: Math.min(95, Math.max(50, avgCEF + 5)),
+    },
+    Governance: {
+      brief: `Automated continuous evidence harvesting and cryptographic sign-off workflows replace subjective manual audits with real-time compliance telemetry.`,
+      threat: 'Stale risk exception registers, delayed audit remediation approvals, and unverified vendor compliance questionnaires.',
+      ratio: '70% Proactive / 30% Reactive',
+      score: Math.min(95, Math.max(50, avgCEF + 12)),
+    },
+    ALL: {
+      brief: `Holistic enterprise defense-in-depth across ${assessment.organizationProfile.targetSystem}, prioritizing Zero-Trust access, continuous automated validation, and resilient cryptographic isolation.`,
+      threat: 'Multi-stage blended campaigns targeting identity brokers, supply chain dependencies, and cloud database access.',
+      ratio: '78% Proactive / 22% Reactive',
+      score: Math.min(95, Math.max(50, avgCEF + 8)),
+    },
+  };
+
+  const currentBrief = domainBriefs[domain] || domainBriefs.ALL;
+
+  // Curated proactive suggestions tailored to the actual controls in the domain
+  const suggestions: AIMitigationSuggestion[] = [];
+
+  // If we have assessed controls, build suggestions mapped to the real assessed controls
+  const focusControls = highRiskControls.length > 0 ? highRiskControls : domainControls.slice(0, 5);
+
+  const proactiveTemplates = [
+    {
+      strategyType: 'ZERO_TRUST' as AIMitigationStrategyType,
+      title: 'Deploy Hardware-Attested Ephemeral Just-In-Time (JIT) IAM Credentials',
+      urgency: 'IMMEDIATE' as const,
+      proactiveStrategy: 'Eliminates standing privileges by issuing short-lived cryptographic tokens (<60 min) bound to hardware security keys (FIDO2/WebAuthn).',
+      technicalImplementation: 'Configure identity provider (IdP) conditional access to enforce WebAuthn Level 3 hardware attestation for administrative roles. Integrate automated ephemeral token issuance via OIDC federation.',
+      configurationSnippet: '{\n  "Version": "2012-10-17",\n  "Statement": [{\n    "Effect": "Allow",\n    "Action": "sts:AssumeRoleWithWebIdentity",\n    "Condition": {\n      "NumericLessThan": {"sts:DurationSeconds": 3600},\n      "Bool": {"aws:MultiFactorAuthPresent": "true"}\n    }\n  }]\n}',
+      compensatingSafeguard: 'Mandatory dual-custody peer approval on all privilege escalation requests in Slack/Teams.',
+      defenseMultiplier: 'Neutralizes 99.4% of credential-theft replay and session-hijacking attacks across microservices.',
+      auditValidationMetric: 'Zero standing domain administrator accounts recorded in daily automated IAM ledger.',
+      cost: 'MEDIUM (1-2 Weeks)' as const,
+      targetId: 'AC-2',
+      defaultTitle: 'Account Management & Ephemeral Access',
+      defaultDomain: 'Cybersecurity' as RiskDomain,
+    },
+    {
+      strategyType: 'DATA_PROTECTION' as AIMitigationStrategyType,
+      title: 'Implement Application-Layer Envelope Encryption with Hardware HSM Root of Trust',
+      urgency: 'HIGH' as const,
+      proactiveStrategy: 'Protects sensitive data payloads before writing to persistence layers, ensuring database compromise yields only undecryptable ciphertext.',
+      technicalImplementation: 'Utilize AES-256-GCM data encryption keys (DEKs) wrapped by Cloud HSM Key Encryption Keys (KEKs) with automatic 90-day key rotation and envelope key caching policies.',
+      configurationSnippet: '# KMS Envelope Encryption Config\nresource "aws_kms_key" "primary_kek" {\n  description             = "Root Envelope Key for Enterprise Database"\n  deletion_window_in_days = 30\n  enable_key_rotation     = true\n  customer_master_key_spec = "SYMMETRIC_DEFAULT"\n}',
+      compensatingSafeguard: 'Transparent database encryption (TDE) combined with strict IP-restricted TLS 1.3 listener policies.',
+      defenseMultiplier: 'Preemptively eliminates data exfiltration impact across all cloud database backups and snapshots.',
+      auditValidationMetric: 'Automated cryptographic entropy verification & daily HSM audit log attestation reports.',
+      cost: 'MEDIUM (1-2 Weeks)' as const,
+      targetId: 'SC-13',
+      defaultTitle: 'Cryptographic Protection & Key Envelopes',
+      defaultDomain: 'Information Security' as RiskDomain,
+    },
+    {
+      strategyType: 'AUTOMATED_INGESTION' as AIMitigationStrategyType,
+      title: 'Automate Continuous Security Posture & Configuration Drift Alerting',
+      urgency: 'HIGH' as const,
+      proactiveStrategy: 'Transitions assessment from point-in-time annual audits to continuous sub-minute telemetry ingestion and automated remediation triggers.',
+      technicalImplementation: 'Deploy Open Policy Agent (OPA) Gatekeeper and AWS/GCP Config rules in blocking mode within CI/CD pipelines to reject misconfigurations before staging deployment.',
+      configurationSnippet: '# OPA Rego Rule: Deny Unencrypted Buckets\npackage kubernetes.admission\ndeny[msg] {\n  input.request.kind.kind == "StorageBucket"\n  not input.request.object.spec.encryption.enforceTls13\n  msg := "Bucket must enforce TLS 1.3 encryption and WORM retention"\n}',
+      compensatingSafeguard: 'Hourly batch configuration scans paired with PagerDuty escalation triggers for critical drift.',
+      defenseMultiplier: 'Halts cloud asset misconfiguration vulnerabilities within 60 seconds of provisioning.',
+      auditValidationMetric: 'Continuous compliance drift ledger showing 0 unauthorized configuration overrides.',
+      cost: 'LOW (1-3 Days)' as const,
+      targetId: 'SI-4',
+      defaultTitle: 'Information System Monitoring & Drift Detection',
+      defaultDomain: 'Cybersecurity' as RiskDomain,
+    },
+    {
+      strategyType: 'PRIVACY_ENGINEERING' as AIMitigationStrategyType,
+      title: 'Enact Synthetic Cryptographic Pseudonymization & Automated Data Subject Access Rights (DSAR)',
+      urgency: 'HIGH' as const,
+      proactiveStrategy: 'Replaces raw PII/SPI with format-preserving tokenized identifiers at the edge API gateway, preventing sensitive data ingress into analytics lakes.',
+      technicalImplementation: 'Deploy tokenization vault service that hashes customer identifiers using HMAC-SHA256 with isolated salting keys. Implement webhook-based automated DSAR deletion orchestrator across all database replicas.',
+      configurationSnippet: '# Gateway Pseudonymization Filter\nupstream token_service {\n  server 10.0.4.12:8443;\n}\nproxy_set_header X-Tokenized-Subject-ID $hashed_customer_token;\nproxy_hide_header X-Raw-Tax-Identifier;',
+      compensatingSafeguard: 'Encrypted column-level masking with dynamic redaction for administrative database queries.',
+      defenseMultiplier: 'Eliminates statutory regulatory fines under GDPR Article 32 and CCPA Section 1798.100.',
+      auditValidationMetric: 'Proof of DSAR fulfillment under 48 hours and 0 unmasked PII records in data warehouse.',
+      cost: 'HIGH (1-2 Months)' as const,
+      targetId: 'PT-2',
+      defaultTitle: 'Authority to Process & Data Minimization',
+      defaultDomain: 'Privacy' as RiskDomain,
+    },
+    {
+      strategyType: 'CONTINUOUS_AUDITING' as AIMitigationStrategyType,
+      title: 'Cryptographic Immutable Audit Logging with WORM S3 Object Lock',
+      urgency: 'MEDIUM' as const,
+      proactiveStrategy: 'Guarantees audit trail integrity against insider tampering and ransomware encryption by enforcing hardware-enforced Write-Once-Read-Many (WORM) compliance storage.',
+      technicalImplementation: 'Configure S3 Object Lock in Compliance Mode with a 7-year retention period. Stream all Kubernetes and API gateway audit events directly to AWS CloudTrail Lake with SHA-256 digest signing.',
+      configurationSnippet: 'aws s3api put-object-lock-configuration \\\n  --bucket enterprise-immutable-audit-logs \\\n  --object-lock-configuration \'{ "ObjectLockEnabled": "Enabled", "Rule": { "DefaultRetention": { "Mode": "COMPLIANCE", "Days": 2555 }}}\'',
+      compensatingSafeguard: 'Dual-destination log streaming to cold secondary cloud provider over mTLS.',
+      defenseMultiplier: 'Prevents adversarial anti-forensics and log tampering during advanced persistent threat (APT) attacks.',
+      auditValidationMetric: '100% cryptographic digest chain validation on weekly automated auditor checks.',
+      cost: 'LOW (1-3 Days)' as const,
+      targetId: 'AU-6',
+      defaultTitle: 'Audit Record Review, Analysis, and Reporting',
+      defaultDomain: 'Governance' as RiskDomain,
+    },
+    {
+      strategyType: 'RESILIENCE' as AIMitigationStrategyType,
+      title: 'Multi-Region Isolated Immutable Backup & Automated Disaster Recovery Sandbox',
+      urgency: 'PROACTIVE_HARDENING' as const,
+      proactiveStrategy: 'Ensures business continuity against total cloud zone destruction or catastrophic ransomware locking via air-gapped immutable snapshots with automated weekly stand-up drills.',
+      technicalImplementation: 'Implement cross-account AWS Backup Vault with separate root credentials and MFA deletion protection. Schedule weekly synthetic failover spin-ups in an isolated disaster recovery sandbox.',
+      configurationSnippet: '# Terraform Immutable Backup Vault\nresource "aws_backup_vault" "airgapped" {\n  name        = "airgapped-immutable-dr-vault"\n  kms_key_arn = aws_kms_key.backup_key.arn\n  locked      = true\n  min_retention_days = 90\n  max_retention_days = 730\n}',
+      compensatingSafeguard: 'Daily offsite database diff dumps verified with automated checksum comparisons.',
+      defenseMultiplier: 'Guarantees RPO < 15 minutes and RTO < 1 hour in the event of enterprise-wide ransomware.',
+      auditValidationMetric: 'Weekly automated disaster recovery stand-up health verification certificates.',
+      cost: 'MEDIUM (1-2 Weeks)' as const,
+      targetId: 'CP-9',
+      defaultTitle: 'Information System Backup & Immutable Recovery',
+      defaultDomain: 'Cybersecurity' as RiskDomain,
+    },
+  ];
+
+  // Map to controls in the assessment
+  proactiveTemplates.forEach((tmpl, idx) => {
+    // Check if matching domain
+    if (domain !== 'ALL' && tmpl.defaultDomain !== domain) {
+      return;
+    }
+
+    const matchedControl = focusControls[idx % focusControls.length];
+    const targetControlId = matchedControl?.controlId || tmpl.targetId;
+    const controlTitle = matchedControl?.title || tmpl.defaultTitle;
+    const actualDomain = matchedControl?.domain || tmpl.defaultDomain;
+    const inherent = matchedControl?.inherentRisk || 16.0;
+    const currResidual = matchedControl?.residualRisk || 10.5;
+    const projResidual = Number(Math.max(1.5, currResidual * 0.35).toFixed(1));
+    const cefGain = Number(((currResidual - projResidual) / inherent).toFixed(2));
+
+    suggestions.push({
+      id: `MIT-${actualDomain.substring(0, 3).toUpperCase()}-0${idx + 1}`,
+      targetControlId,
+      controlTitle,
+      domain: actualDomain,
+      strategyType: tmpl.strategyType,
+      title: tmpl.title,
+      urgency: tmpl.urgency,
+      inherentRisk: inherent,
+      currentResidualRisk: currResidual,
+      projectedResidualRisk: projResidual,
+      estimatedCEFImprovement: cefGain,
+      vulnerabilityAddressed: matchedControl?.gapsIdentified || `Identified risk exposure in ${controlTitle} under ${sector.name} operational environment.`,
+      proactiveStrategy: tmpl.proactiveStrategy,
+      technicalImplementation: tmpl.technicalImplementation,
+      configurationSnippet: tmpl.configurationSnippet,
+      compensatingSafeguard: tmpl.compensatingSafeguard,
+      defenseMultiplier: tmpl.defenseMultiplier,
+      auditValidationMetric: tmpl.auditValidationMetric,
+      implementationCost: tmpl.cost,
+      status: 'PROPOSED',
+    });
+  });
+
+  const aggregateReduction = Number(
+    (
+      (suggestions.reduce((acc, s) => acc + (s.currentResidualRisk - s.projectedResidualRisk), 0) /
+        (suggestions.reduce((acc, s) => acc + s.currentResidualRisk, 0) || 1)) *
+      100
+    ).toFixed(1)
+  );
+
+  const result: AIMitigationDomainResult = {
+    engineUsed: getAIEngineLabel(settings),
+    generatedTimestamp: new Date().toISOString(),
+    domain,
+    sector: sector.name,
+    domainExecutiveBrief: currentBrief.brief,
+    threatContext: currentBrief.threat,
+    overallMaturityScore: currentBrief.score,
+    proactiveVsReactiveRatio: currentBrief.ratio,
+    totalSuggestions: suggestions.length,
+    estimatedAggregateRiskReduction: aggregateReduction > 0 ? aggregateReduction : 38.5,
+    suggestions,
+    frameworkMappings: {
+      nistSp80053: ['AC-2', 'IA-2', 'SC-8', 'SC-13', 'SI-4', 'AU-6', 'PT-2', 'CP-9'],
+      csaCcm: ['IAM-01', 'DSI-02', 'EKM-03', 'SEF-04', 'BCR-02', 'IVS-06'],
+      iso27001: ['A.9.2.1', 'A.9.4.2', 'A.10.1.1', 'A.12.4.1', 'A.17.1.1', 'A.18.1.1'],
+    },
+  };
+  setCachedResult(cacheKey, result);
+  return result;
 }

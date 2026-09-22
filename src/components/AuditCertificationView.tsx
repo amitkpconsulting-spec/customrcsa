@@ -4,6 +4,11 @@ import {
   Printer,
   Award,
   Lock,
+  ArrowRight,
+  TrendingDown,
+  Cpu,
+  Activity,
+  Sliders,
 } from 'lucide-react';
 import { RCSAPayload, AuditSignoff } from '../types';
 import { computeDomainSummaries } from '../utils/riskCalculations';
@@ -12,12 +17,14 @@ interface AuditCertificationViewProps {
   assessment: RCSAPayload;
   onUpdateSignoff: (signoff: AuditSignoff) => void;
   onPrintReport: () => void;
+  onNavigateToRTP?: () => void;
 }
 
 export const AuditCertificationView: React.FC<AuditCertificationViewProps> = ({
   assessment,
   onUpdateSignoff,
   onPrintReport,
+  onNavigateToRTP,
 }) => {
   const [assessorName, setAssessorName] = useState(
     assessment.auditSignoff.assessorSignedBy || assessment.organizationProfile.assessorName
@@ -369,6 +376,60 @@ export const AuditCertificationView: React.FC<AuditCertificationViewProps> = ({
             placeholder="Document formal audit findings, accepted exceptions, and board-level risk appetite alignment..."
             className="w-full p-3 text-xs border border-[#333333] bg-black text-white focus:border-[#f5ff00] outline-none font-mono"
           />
+        </div>
+
+        {/* POST-RCSA AUDIT COMPLETION: RISK TREATMENT PLAN (RTP) ONBOARDING */}
+        <div className="pt-6 border-t border-[#262626] space-y-4">
+          <div className="p-5 border border-[#333333] bg-gradient-to-r from-[#161616] via-[#141414] to-[#1a1c12] space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase font-mono font-bold tracking-widest text-[#f5ff00] border border-[#333333] bg-black px-2 py-0.5">
+                  POST-AUDIT NEXT STEP
+                </span>
+                <span className="text-xs font-mono font-bold text-white uppercase">
+                  Establish Risk Treatment Plan (RTP)
+                </span>
+              </div>
+              {onNavigateToRTP && (
+                <button
+                  onClick={onNavigateToRTP}
+                  className="px-4 py-2 bg-[#f5ff00] text-black font-mono text-xs font-bold uppercase tracking-wider hover:bg-yellow-300 transition flex items-center gap-2 cursor-pointer self-start sm:self-auto shadow-[0_0_12px_rgba(245,255,0,0.25)]"
+                >
+                  <span>Open Risk Treatment Plan (RTP)</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            <p className="text-xs font-mono text-[#aaaaaa] leading-relaxed">
+              When the RCSA Audit completes, the organization defines criteria for Priority (controls with Major Risk Score
+              between Medium-High to High) to formulate an actionable Risk Treatment Plan (RTP) with annual milestones for Product Owners.
+            </p>
+
+            {/* 5 Steps Quick Callout Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-5 gap-2 pt-2 text-[11px] font-mono">
+              <div className="p-2.5 bg-black border border-[#262626]">
+                <span className="text-rose-400 font-bold block">1. Analyze Gap</span>
+                <span className="text-[#888888] text-[10px]">Inherent vs CEF</span>
+              </div>
+              <div className="p-2.5 bg-black border border-[#262626]">
+                <span className="text-amber-400 font-bold block">2. Action Plans</span>
+                <span className="text-[#888888] text-[10px]">Named PO & Deadlines</span>
+              </div>
+              <div className="p-2.5 bg-black border border-[#262626]">
+                <span className="text-purple-400 font-bold block">3. Treatments</span>
+                <span className="text-[#888888] text-[10px]">Mitigate / Transfer / Avoid / Accept</span>
+              </div>
+              <div className="p-2.5 bg-black border border-[#262626]">
+                <span className="text-sky-400 font-bold block">4. Automate</span>
+                <span className="text-[#888888] text-[10px]">Manual ➔ Technological</span>
+              </div>
+              <div className="p-2.5 bg-black border border-[#262626]">
+                <span className="text-emerald-400 font-bold block">5. Monitor KRIs</span>
+                <span className="text-[#888888] text-[10px]">Interim Review Triggers</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
+import { RadarChart, BarChart } from '@mui/x-charts';
 import {
   FileSpreadsheet,
   FileText,
@@ -22,9 +23,11 @@ import {
   Building,
   Info,
   RefreshCw,
+  Target,
 } from 'lucide-react';
 import { RCSAPayload, RiskDomain, RCSADomainType } from '../types';
 import { exportRCSAToExcel, exportRCSAToJSON, printAuditReport } from '../utils/exportUtils';
+import { SECTOR_PROFILES } from '../data/sectorProfiles';
 
 interface ReportsSectionProps {
   assessment: RCSAPayload;
@@ -112,6 +115,60 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
     (c) => c.status === 'NEEDS_ATTENTION'
   );
 
+  // Heatmap matrix 5x5 distribution calculation
+  const heatmap5x5Counts = useMemo(() => {
+    const grid: Record<string, { count: number; codes: string[] }> = {};
+    for (let imp = 1; imp <= 5; imp++) {
+      for (let lik = 1; lik <= 5; lik++) {
+        grid[`${imp}-${lik}`] = { count: 0, codes: [] };
+      }
+    }
+    filteredControls.forEach((c) => {
+      const imp = Math.min(5, Math.max(1, Math.round(c.inherentImpact || (c.residualRisk / 5))));
+      const lik = Math.min(5, Math.max(1, Math.round(c.inherentLikelihood || (c.residualRisk / 5))));
+      const key = `${imp}-${lik}`;
+      if (grid[key]) {
+        grid[key].count += 1;
+        grid[key].codes.push(c.controlId);
+      }
+    });
+    return grid;
+  }, [filteredControls]);
+
+  // Radar comparative dataset
+  const radarChartData = useMemo(() => {
+    const defaultProfile = SECTOR_PROFILES.Financial || Object.values(SECTOR_PROFILES)[0];
+    const sectorKey = (assessment.organizationProfile.sector as keyof typeof SECTOR_PROFILES) || 'Financial';
+    const sectorProfile = SECTOR_PROFILES[sectorKey] || defaultProfile;
+
+    const domainsToRender = selectedDomains.length > 0 ? selectedDomains : ['Cybersecurity', 'Privacy', 'Information Security', 'Governance'];
+    
+    return domainsToRender.map((dom) => {
+      const domControls = filteredControls.filter((c) => c.domain === dom);
+      const dTotal = domControls.length || 1;
+      const currentCEF = Number(
+        ((domControls.reduce((s, c) => s + c.calculatedCEF, 0) / dTotal) * 100).toFixed(0)
+      );
+      const benchmarkScore = Math.min(95, Math.max(70, Math.round(82 * (sectorProfile.defaultRiskMultiplier ? (sectorProfile.defaultRiskMultiplier / 1.3) : 1))));
+
+      return {
+        domain: dom,
+        currentScore: currentCEF,
+        benchmarkTarget: benchmarkScore,
+        peerAverage: Math.max(50, benchmarkScore - 8),
+      };
+    });
+  }, [selectedDomains, filteredControls, assessment.organizationProfile.sector]);
+
+  // Helper for heatmap cell severity coloring in report preview
+  const getReportCellColor = (imp: number, lik: number) => {
+    const product = imp * lik;
+    if (product >= 16) return 'bg-rose-950/40 border-rose-700 text-rose-300';
+    if (product >= 10) return 'bg-amber-950/40 border-amber-600 text-amber-300';
+    if (product >= 5) return 'bg-yellow-950/40 border-yellow-600 text-yellow-300';
+    return 'bg-emerald-950/40 border-emerald-600 text-emerald-300';
+  };
+
   // Generate Bulk CSV Package
   const handleGenerateBulkCSV = () => {
     setIsExporting(true);
@@ -135,9 +192,9 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
       const rows = filteredControls.map((c) => [
         `"${c.domain}"`,
         `"${c.family}"`,
-        `"${c.code}"`,
+        `"${c.controlId}"`,
         `"${c.title.replace(/"/g, '""')}"`,
-        `"${c.status}"`,
+        `"${c.implementationEvidence ? 'IMPLEMENTED' : 'EVALUATED'}"`,
         c.inherentRisk,
         c.calculatedCEF,
         c.residualRisk,
@@ -145,7 +202,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         `"${assessment.organizationProfile.assessorName}"`,
         `"${assessment.organizationProfile.sector}"`,
         `"${assessment.organizationProfile.targetSystem.replace(/"/g, '""')}"`,
-        `"${c.notes ? c.notes.replace(/"/g, '""') : 'No formal deficiency recorded'}"`,
+        `"${(c.gapsIdentified || c.implementationEvidence || 'No formal deficiency recorded').replace(/"/g, '""')}"`,
       ]);
 
       const csvContent =
@@ -493,7 +550,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-syne font-extrabold uppercase text-white tracking-tight">
-              {assessment.organizationProfile.assessmentName}
+              {assessment.assessmentName || assessment.organizationProfile.targetSystem}
             </h1>
             <p className="text-xs font-mono text-[#aaaaaa] mt-1">
               {assessment.organizationProfile.businessUnit} • {assessment.organizationProfile.targetSystem}
@@ -558,85 +615,208 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
           </div>
         )}
 
-        {/* Section 2: Domain-by-Domain Posture Breakdown */}
+        {/* Section 2: Domain-by-Domain Posture Breakdown & Radar Gap */}
         {inclusions.domainMaturityScores && (
-          <div className="space-y-3 pt-4 border-t border-[#222222]">
+          <div className="space-y-4 pt-4 border-t border-[#222222] print-break-avoid">
             <div className="flex items-center gap-2">
               <span className="px-2 py-0.5 text-[9px] font-mono font-bold bg-[#f5ff00] text-black">
                 SECTION 02
               </span>
               <h3 className="font-syne text-lg font-bold uppercase text-white">
-                Multi-Domain Risk & Compliance Breakdown
+                Multi-Domain Risk & Benchmark Gap Analysis
               </h3>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left font-mono text-xs border border-[#262626]">
-                <thead className="bg-[#181818] text-[#888888] border-b border-[#262626]">
-                  <tr>
-                    <th className="p-3">Domain</th>
-                    <th className="p-3">Controls</th>
-                    <th className="p-3">Inherent Risk</th>
-                    <th className="p-3">CEF Maturity</th>
-                    <th className="p-3">Residual Risk</th>
-                    <th className="p-3">Deficiencies</th>
-                    <th className="p-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#222222] bg-[#111111]">
-                  {selectedDomains.map((dom) => {
-                    const domControls = filteredControls.filter((c) => c.domain === dom);
-                    const dTotal = domControls.length || 1;
-                    const dInherent = Number(
-                      (domControls.reduce((s, c) => s + c.inherentRisk, 0) / dTotal).toFixed(1)
-                    );
-                    const dResidual = Number(
-                      (domControls.reduce((s, c) => s + c.residualRisk, 0) / dTotal).toFixed(1)
-                    );
-                    const dCEF = Number(
-                      (domControls.reduce((s, c) => s + c.calculatedCEF, 0) / dTotal).toFixed(2)
-                    );
-                    const dDef = domControls.filter(
-                      (c) => c.status === 'CRITICAL_DEFICIENCY' || c.status === 'NEEDS_ATTENTION'
-                    ).length;
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              {/* Domain Maturity Table */}
+              <div className="lg:col-span-7 overflow-x-auto">
+                <table className="w-full text-left font-mono text-xs border border-[#262626]">
+                  <thead className="bg-[#181818] text-[#888888] border-b border-[#262626]">
+                    <tr>
+                      <th className="p-2.5">Domain</th>
+                      <th className="p-2.5">CEF</th>
+                      <th className="p-2.5">Residual</th>
+                      <th className="p-2.5">Deficiencies</th>
+                      <th className="p-2.5">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#222222] bg-[#111111]">
+                    {selectedDomains.map((dom) => {
+                      const domControls = filteredControls.filter((c) => c.domain === dom);
+                      const dTotal = domControls.length || 1;
+                      const dResidual = Number(
+                        (domControls.reduce((s, c) => s + c.residualRisk, 0) / dTotal).toFixed(1)
+                      );
+                      const dCEF = Number(
+                        (domControls.reduce((s, c) => s + c.calculatedCEF, 0) / dTotal).toFixed(2)
+                      );
+                      const dDef = domControls.filter(
+                        (c) => c.status === 'CRITICAL_DEFICIENCY' || c.status === 'NEEDS_ATTENTION'
+                      ).length;
 
-                    return (
-                      <tr key={dom} className="hover:bg-[#161616]">
-                        <td className="p-3 font-bold text-white flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-[#f5ff00]" />
-                          {dom}
-                        </td>
-                        <td className="p-3 text-[#aaaaaa]">{domControls.length}</td>
-                        <td className="p-3 text-[#aaaaaa]">{dInherent}</td>
-                        <td className="p-3 text-[#f5ff00] font-bold">{(dCEF * 100).toFixed(0)}%</td>
-                        <td className="p-3 text-white font-bold">{dResidual}</td>
-                        <td className="p-3">
-                          {dDef > 0 ? (
-                            <span className="text-rose-400 font-bold">{dDef} Open</span>
-                          ) : (
-                            <span className="text-emerald-400">0 Clear</span>
-                          )}
-                        </td>
-                        <td className="p-3">
-                          <span className="px-2 py-0.5 text-[10px] font-bold border border-[#333333] bg-black text-[#cccccc]">
-                            {dDef > 0 ? 'NEEDS ATTENTION' : 'COMPLIANT'}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                      return (
+                        <tr key={dom} className="hover:bg-[#161616]">
+                          <td className="p-2.5 font-bold text-white flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-[#f5ff00]" />
+                            {dom}
+                          </td>
+                          <td className="p-2.5 text-[#f5ff00] font-bold">{(dCEF * 100).toFixed(0)}%</td>
+                          <td className="p-2.5 text-white font-bold">{dResidual} / 25</td>
+                          <td className="p-2.5">
+                            {dDef > 0 ? (
+                              <span className="text-rose-400 font-bold">{dDef} Open</span>
+                            ) : (
+                              <span className="text-emerald-400 font-medium">0 Clear</span>
+                            )}
+                          </td>
+                          <td className="p-2.5">
+                            <span className="px-1.5 py-0.5 text-[9px] font-bold border border-[#333333] bg-black text-[#cccccc]">
+                              {dDef > 0 ? 'ATTENTION' : 'COMPLIANT'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Radar Chart Visual */}
+              <div className="lg:col-span-5 p-3 bg-[#141414] border border-[#262626] flex flex-col items-center justify-center">
+                <div className="w-full text-center pb-1 border-b border-[#262626] mb-2 flex items-center justify-between">
+                  <span className="text-[10px] font-mono font-bold uppercase text-[#888888]">
+                    Radar Gap vs Sector Profile
+                  </span>
+                  <span className="text-[9px] font-mono text-[#f5ff00]">
+                    {assessment.organizationProfile.sector}
+                  </span>
+                </div>
+                <div className="w-full h-48 sm:h-56 flex items-center justify-center">
+                  <RadarChart
+                    radar={{
+                      metrics: radarChartData.map((d) => d.domain),
+                      max: 100,
+                    }}
+                    series={[
+                      {
+                        id: 'current',
+                        label: 'Assessment',
+                        data: radarChartData.map((d) => d.currentScore),
+                        color: '#f5ff00',
+                        fillArea: true,
+                      },
+                      {
+                        id: 'benchmark',
+                        label: 'Benchmark',
+                        data: radarChartData.map((d) => d.benchmarkTarget),
+                        color: '#38bdf8',
+                        fillArea: true,
+                      },
+                    ]}
+                    height={210}
+                    sx={{
+                      width: '100%',
+                      '& .MuiChartsRotationAxis-tickLabel': {
+                        fill: '#aaaaaa !important',
+                        fontFamily: 'monospace !important',
+                        fontSize: '9px !important',
+                      },
+                      '& .MuiRadarGrid-root line, & .MuiRadarGrid-root path': {
+                        stroke: '#333333 !important',
+                      },
+                      '& .MuiChartsLegend-root text': {
+                        fill: '#aaaaaa !important',
+                        fontFamily: 'monospace !important',
+                        fontSize: '9px !important',
+                      },
+                    }}
+                  />
+                </div>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Section 3: Open Deficiencies & POA&M Ledger */}
+        {/* Section 3: Residual Risk Heatmap Matrix (5x5) */}
+        {inclusions.residualRiskHeatmap && (
+          <div className="space-y-3 pt-4 border-t border-[#222222] print-break-avoid">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 text-[9px] font-mono font-bold bg-[#f5ff00] text-black">
+                  SECTION 03
+                </span>
+                <h3 className="font-syne text-lg font-bold uppercase text-white">
+                  Residual Risk Heatmap Matrix (5 × 5 Topology)
+                </h3>
+              </div>
+              <span className="text-[10px] font-mono text-[#888888]">
+                Total Controls: <strong className="text-white">{filteredControls.length}</strong>
+              </span>
+            </div>
+
+            <div className="p-4 bg-[#141414] border border-[#262626] space-y-2">
+              <div className="flex items-center justify-between text-[10px] font-mono text-[#888888] pb-1 border-b border-[#262626]">
+                <span>Likelihood (Y-Axis: L5 to L1)</span>
+                <span>Impact (X-Axis: I1 to I5)</span>
+              </div>
+
+              {/* 5x5 Heatmap rows */}
+              <div className="space-y-1.5 pt-1">
+                {[5, 4, 3, 2, 1].map((lik) => (
+                  <div key={lik} className="flex items-center gap-2">
+                    <div className="w-7 text-right font-mono text-[10px] font-bold text-[#888888]">
+                      L{lik}
+                    </div>
+                    <div className="grid grid-cols-5 gap-1.5 flex-1">
+                      {[1, 2, 3, 4, 5].map((imp) => {
+                        const cell = heatmap5x5Counts[`${imp}-${lik}`] || { count: 0, codes: [] };
+                        const colorClass = getReportCellColor(imp, lik);
+                        return (
+                          <div
+                            key={imp}
+                            className={`p-2 border rounded-none flex items-center justify-between ${colorClass}`}
+                          >
+                            <span className="text-[9px] font-mono font-bold opacity-70">
+                              {imp}×{lik}
+                            </span>
+                            <span className="text-xs font-mono font-bold">
+                              {cell.count}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="pt-2 flex items-center justify-between text-[10px] font-mono text-[#888888] border-t border-[#222222]">
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 bg-emerald-950 border border-emerald-600 inline-block" /> Low
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 bg-yellow-950 border border-yellow-600 inline-block" /> Medium
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 bg-amber-950 border border-amber-600 inline-block" /> High
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 bg-rose-950 border border-rose-700 inline-block" /> Critical
+                  </span>
+                </div>
+                <span>CEF Mitigated Posture</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Section 4: Open Deficiencies & POA&M Ledger */}
         {inclusions.openDeficienciesPOA && (
-          <div className="space-y-3 pt-4 border-t border-[#222222]">
+          <div className="space-y-3 pt-4 border-t border-[#222222] print-break-avoid">
             <div className="flex items-center gap-2">
               <span className="px-2 py-0.5 text-[9px] font-mono font-bold bg-[#f5ff00] text-black">
-                SECTION 03
+                SECTION 04
               </span>
               <h3 className="font-syne text-lg font-bold uppercase text-white">
                 Corrective Action Plan & Deficiencies Ledger (POA&M)
@@ -646,19 +826,19 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
             <div className="space-y-2">
               {[...criticalDeficiencies, ...attentionDeficiencies].slice(0, 5).map((def) => (
                 <div
-                  key={def.id}
+                  key={def.controlId}
                   className="p-4 bg-[#141414] border border-[#2a2a2a] flex flex-col sm:flex-row sm:items-center justify-between gap-3 font-mono text-xs"
                 >
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="px-2 py-0.5 text-[9px] font-bold bg-rose-950 text-rose-300 border border-rose-800">
-                        {def.code}
+                        {def.controlId}
                       </span>
                       <span className="font-bold text-white">{def.title}</span>
                       <span className="text-[#888888]">({def.domain})</span>
                     </div>
                     <p className="text-[#999999] text-[11px]">
-                      {def.notes || 'Inadequate compensating controls identified during technical audit examination.'}
+                      {def.gapsIdentified || def.implementationEvidence || 'Inadequate compensating controls identified during technical audit examination.'}
                     </p>
                   </div>
 
@@ -689,17 +869,17 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-2 font-mono text-xs">
               <div className="p-4 bg-[#141414] border border-[#262626] space-y-3">
                 <div className="text-[#888888] text-[10px] uppercase">Lead Risk Assessor Signature</div>
-                <div className="text-white font-bold">{assessment.auditSignoff.leadAssessor}</div>
+                <div className="text-white font-bold">{assessment.auditSignoff.assessorSignedBy || assessment.organizationProfile.assessorName}</div>
                 <div className="border-b border-[#333333] pt-4 font-mono text-[10px] text-[#666666]">
-                  CERTIFIED DATE: {assessment.auditSignoff.assessorSignoffDate || '2026-08-16'}
+                  CERTIFIED DATE: {assessment.auditSignoff.assessorSignDate || '2026-08-29'}
                 </div>
               </div>
 
               <div className="p-4 bg-[#141414] border border-[#262626] space-y-3">
                 <div className="text-[#888888] text-[10px] uppercase">Executive Officer Approval</div>
-                <div className="text-white font-bold">{assessment.auditSignoff.chiefRiskOfficer}</div>
+                <div className="text-white font-bold">{assessment.auditSignoff.cisoCertifiedBy || 'Chief Information Security Officer'}</div>
                 <div className="border-b border-[#333333] pt-4 font-mono text-[10px] text-[#666666]">
-                  BOARD SUBMISSION: {assessment.auditSignoff.officerSignoffDate || '2026-08-16'}
+                  BOARD SUBMISSION: {assessment.auditSignoff.cisoCertifyDate || '2026-08-29'}
                 </div>
               </div>
             </div>

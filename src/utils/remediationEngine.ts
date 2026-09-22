@@ -21,8 +21,8 @@ export async function generateRemediationRoadmap(
   const mode = aiSettings?.mode || 'gemini';
   const isAirGapped = aiSettings?.isAirGappedMode || mode === 'offline_expert';
 
-  // 1. Google Gemini Cloud API
-  if (mode === 'gemini' && !isAirGapped) {
+  // 1. Unified Backend AI Call (Gemini, Ollama, LM Studio, AnythingLLM)
+  if (!isAirGapped) {
     try {
       const res = await fetch('/api/gemini/remediate', {
         method: 'POST',
@@ -30,6 +30,7 @@ export async function generateRemediationRoadmap(
         body: JSON.stringify({
           sector,
           systemName,
+          aiSettings,
           focusControls: focusControls.map((c) => ({
             controlId: c.controlId,
             title: c.title,
@@ -70,8 +71,8 @@ export async function generateRemediationRoadmap(
           );
 
           return {
-            engineUsed: 'Google Gemini 3.7 Flash',
-            modelVersion: 'gemini-3.7-flash-v2',
+            engineUsed: json.source || (mode === 'gemini' ? 'Google Gemini 3.7 Flash' : mode),
+            modelVersion: mode === 'gemini' ? 'gemini-3.7-flash' : (aiSettings?.ollamaModel || aiSettings?.lmStudioModel || 'local-model'),
             generatedTimestamp: new Date().toISOString(),
             executiveSummary: json.data.executive_summary || `Generated comprehensive NIST SP 800-53 Rev. 5 remediation roadmap for ${systemName}.`,
             sectorNotes: json.data.sector_regulatory_notes,
@@ -80,50 +81,7 @@ export async function generateRemediationRoadmap(
         }
       }
     } catch (e) {
-      console.warn('Gemini endpoint unavailable, falling back to local heuristic engine:', e);
-    }
-  }
-
-  // 2. LM Studio Local Provider (OpenAI Compatible)
-  if (mode === 'local_lmstudio' && !isAirGapped && aiSettings?.lmStudioEndpoint) {
-    try {
-      const endpoint = `${aiSettings.lmStudioEndpoint.replace(/\/$/, '')}/chat/completions`;
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: aiSettings.lmStudioModel || 'local-model',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are a NIST SP 800-53 Rev. 5 Lead Assessor. Respond in JSON with remediation roadmap items.',
-            },
-            {
-              role: 'user',
-              content: `System: ${systemName}, Sector: ${sector}. Generate remediation for ${focusControls.map(c => c.controlId).join(', ')}.`,
-            },
-          ],
-          temperature: 0.2,
-        }),
-      });
-
-      if (res.ok) {
-        const json = await res.json();
-        const content = json.choices?.[0]?.message?.content;
-        if (content) {
-          // If valid JSON returned
-          try {
-            const parsed = JSON.parse(content);
-            if (Array.isArray(parsed?.remediation_roadmap)) {
-              // Valid response
-            }
-          } catch {
-            // Use local fallback
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('LM Studio local endpoint not responding, using deterministic engine:', e);
+      console.warn('Backend remediation API unavailable, falling back to local heuristic engine:', e);
     }
   }
 

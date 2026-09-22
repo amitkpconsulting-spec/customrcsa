@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Shield,
   Lock,
@@ -21,6 +21,8 @@ import {
   Tag,
   Save,
   Clock,
+  Search,
+  Filter,
 } from 'lucide-react';
 import { RCSADomainType, SectorType, RCSAPayload, RiskDomain, RCSATemplate } from '../types';
 import { RCSA_DOMAIN_CONFIGS, getControlsForRCSADomain } from '../data/nistControls';
@@ -94,9 +96,28 @@ export const CreateRCSASection: React.FC<CreateRCSASectionProps> = ({
   const [newTemplateTags, setNewTemplateTags] = useState('Custom, Baseline, Q3');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Template Search and Filter
+  const [tplSearch, setTplSearch] = useState('');
+  const [tplSectorFilter, setTplSectorFilter] = useState<string>('ALL');
+
   useEffect(() => {
     setTemplates(getSavedTemplates());
   }, []);
+
+  const filteredTemplates = useMemo(() => {
+    return templates.filter((tpl) => {
+      const matchSector = tplSectorFilter === 'ALL' || tpl.sector === tplSectorFilter;
+      const q = tplSearch.toLowerCase().trim();
+      const matchSearch =
+        !q ||
+        tpl.name.toLowerCase().includes(q) ||
+        tpl.description.toLowerCase().includes(q) ||
+        tpl.targetSystem.toLowerCase().includes(q) ||
+        tpl.sector.toLowerCase().includes(q) ||
+        (tpl.tags && tpl.tags.some((t) => t.toLowerCase().includes(q)));
+      return matchSector && matchSearch;
+    });
+  }, [templates, tplSectorFilter, tplSearch]);
 
   const handleApplyTemplate = (tpl: RCSATemplate) => {
     setSelectedTemplateId(tpl.id);
@@ -397,7 +418,7 @@ export const CreateRCSASection: React.FC<CreateRCSASectionProps> = ({
             <h3 className="font-mono text-xs uppercase tracking-[0.2em] font-bold text-white">
               SAVED & ARCHETYPE TEMPLATES LIBRARY
             </h3>
-            <span className="font-mono text-[10px] text-[#888888]">({templates.length} AVAILABLE)</span>
+            <span className="font-mono text-[10px] text-[#888888]">({filteredTemplates.length} / {templates.length} AVAILABLE)</span>
           </div>
 
           <span className="text-[10px] font-mono text-[#888888]">
@@ -405,50 +426,87 @@ export const CreateRCSASection: React.FC<CreateRCSASectionProps> = ({
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {templates.map((tpl) => {
-            const isSelected = selectedTemplateId === tpl.id;
-            return (
-              <div
-                key={tpl.id}
-                onClick={() => handleApplyTemplate(tpl)}
-                className={`p-4 border text-left transition cursor-pointer flex flex-col justify-between space-y-3 group relative ${
-                  isSelected
-                    ? 'border-[#f5ff00] bg-[#1c1c08]'
-                    : 'border-[#262626] bg-[#0f0f0f] hover:border-[#444444] hover:bg-[#161616]'
+        {/* Search & Sector Filters for Templates */}
+        <div className="space-y-2.5">
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-[#888888] absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={tplSearch}
+              onChange={(e) => setTplSearch(e.target.value)}
+              placeholder="Filter templates by name, sector, system, or regulatory tags..."
+              className="w-full pl-9 pr-4 py-2 bg-black border border-[#333333] text-white text-xs font-mono placeholder:text-[#666666] focus:border-[#f5ff00] outline-none"
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-[10px] font-mono">
+            {['ALL', 'Financial', 'Healthcare', 'Retail', 'Technology', 'Critical_Infrastructure', 'Defense', 'Public_Sector', 'General_Enterprise'].map((sec) => (
+              <button
+                key={sec}
+                type="button"
+                onClick={() => setTplSectorFilter(sec)}
+                className={`px-2 py-0.5 uppercase whitespace-nowrap transition border ${
+                  tplSectorFilter === sec
+                    ? 'border-[#f5ff00] bg-[#1a1a00] text-[#f5ff00] font-bold'
+                    : 'border-[#262626] bg-[#0c0c0c] text-[#888888] hover:text-white'
                 }`}
               >
-                <div className="space-y-1.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="font-mono text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 border border-[#333333] bg-black text-[#f5ff00]">
-                      {tpl.domains.join(' + ')}
-                    </span>
-                    {!tpl.isDefault && (
-                      <button
-                        onClick={(e) => handleDeleteTemplate(tpl.id, e)}
-                        className="text-[#666666] hover:text-rose-400 p-1 transition"
-                        title="Delete custom template"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    )}
+                {sec.replace('_', ' ')}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[420px] overflow-y-auto pr-1">
+          {filteredTemplates.length === 0 ? (
+            <div className="col-span-full py-8 text-center text-[#666666] font-mono text-xs border border-dashed border-[#262626]">
+              No templates match your search criteria.
+            </div>
+          ) : (
+            filteredTemplates.map((tpl) => {
+              const isSelected = selectedTemplateId === tpl.id;
+              return (
+                <div
+                  key={tpl.id}
+                  onClick={() => handleApplyTemplate(tpl)}
+                  className={`p-4 border text-left transition cursor-pointer flex flex-col justify-between space-y-3 group relative ${
+                    isSelected
+                      ? 'border-[#f5ff00] bg-[#1c1c08]'
+                      : 'border-[#262626] bg-[#0f0f0f] hover:border-[#444444] hover:bg-[#161616]'
+                  }`}
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-mono text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 border border-[#333333] bg-black text-[#f5ff00]">
+                        {tpl.domains.join(' + ')}
+                      </span>
+                      {!tpl.isDefault && (
+                        <button
+                          onClick={(e) => handleDeleteTemplate(tpl.id, e)}
+                          className="text-[#666666] hover:text-rose-400 p-1 transition"
+                          title="Delete custom template"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+
+                    <h4 className="text-sm font-syne font-bold uppercase text-white group-hover:text-[#f5ff00] transition">
+                      {tpl.name}
+                    </h4>
+                    <p className="text-[11px] text-[#888888] font-sans leading-relaxed line-clamp-2">
+                      {tpl.description}
+                    </p>
                   </div>
 
-                  <h4 className="text-sm font-syne font-bold uppercase text-white group-hover:text-[#f5ff00] transition">
-                    {tpl.name}
-                  </h4>
-                  <p className="text-[11px] text-[#888888] font-sans leading-relaxed line-clamp-2">
-                    {tpl.description}
-                  </p>
+                  <div className="pt-2 border-t border-[#222222] flex items-center justify-between text-[10px] font-mono text-[#777777]">
+                    <span>Sector: <strong className="text-[#aaaaaa]">{tpl.sector}</strong></span>
+                    <span>Impact: <strong className="text-white">{tpl.systemImpactLevel}</strong></span>
+                  </div>
                 </div>
-
-                <div className="pt-2 border-t border-[#222222] flex items-center justify-between text-[10px] font-mono text-[#777777]">
-                  <span>Sector: <strong className="text-[#aaaaaa]">{tpl.sector}</strong></span>
-                  <span>Impact: <strong className="text-white">{tpl.systemImpactLevel}</strong></span>
-                </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </div>
 

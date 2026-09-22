@@ -50,16 +50,21 @@ export type ControlStatus =
 
 export type AssessmentWorkflowStage =
   | 'dashboard'
+  | 'assessment_workflow'
+  | 'governance'
   | 'ai_dashboard'
   | 'create_rcsa'
   | 'scope'
   | 'questionnaire'
   | 'source_questionnaire'
   | 'heatmap'
+  | 'compliance_timeline'
+  | 'timeline'
   | 'remediation'
   | 'action_items'
   | 'signoff'
   | 'reports'
+  | 'presentation'
   | 'export';
 
 export interface SourceStandardMapping {
@@ -185,6 +190,185 @@ export interface AuditSignoff {
   auditNotes?: string;
 }
 
+export type RiskTreatmentOption = 'MITIGATE' | 'TRANSFER' | 'AVOID' | 'ACCEPT';
+
+export interface RiskTreatmentMilestone {
+  id: string;
+  title: string;
+  period: string; // e.g. "Q1 2026", "Q2 2026", "Q3 2026", "Q4 2026"
+  targetRiskReductionPts: number;
+  status: 'PLANNED' | 'IN_PROGRESS' | 'COMPLETED' | 'AT_RISK';
+  associatedControlIds: string[];
+  completionPct: number;
+  owner: string;
+  verificationCriteria: string;
+}
+
+export interface KRIThresholdItem {
+  id: string;
+  indicatorName: string;
+  targetControlId: string;
+  metricUnit: string;
+  currentValue: number;
+  warningThreshold: number;
+  breachThreshold: number;
+  status: 'NORMAL' | 'WARNING' | 'BREACHED';
+  interimReviewTriggered: boolean;
+  lastChecked: string;
+  description: string;
+}
+
+export type WHORiskCategory =
+  | 'PARTICIPANT_RIGHTS_SAFETY'
+  | 'DATA_INTEGRITY_PROTECTION'
+  | 'PROJECT_COMPLETION_OPERATIONAL'
+  | 'SECURITY_ACCESS_CONTROL'
+  | 'SYSTEM_REPUTATIONAL';
+
+export interface WHODocumentHeader {
+  protocolRef: string;
+  planTitle: string;
+  shortTitle: string;
+  versionNumber: string;
+  documentDate: string;
+  templateSource: string;
+  reviewAndApproval: {
+    function: 'Prepared by' | 'Approved by' | 'Quality Assurance' | 'SMT Lead';
+    name: string;
+    date: string;
+    signature: string;
+    status: 'SIGNED' | 'PENDING';
+  }[];
+  revisionRecord: {
+    version: string;
+    changes: string;
+    author: string;
+    date: string;
+  }[];
+}
+
+export interface RiskTreatmentItem {
+  id: string;
+  controlId: string;
+  controlTitle: string;
+  domain: RiskDomain;
+  businessProcessOrApp: string;
+  inherentRisk: number;
+  currentCEF: number;
+  residualRisk: number;
+  riskScoreBand: 'Critical' | 'High' | 'Medium-High' | 'Medium' | 'Low';
+  priorityCriteriaMatched: string[];
+  treatmentOption: RiskTreatmentOption;
+  treatmentRationale: string;
+  actionPlanSteps: string[];
+  namedOwner: string;
+  ownerRole: string;
+  deadline: string;
+  isAutomatedSafeguard: boolean;
+  automationMechanism: string;
+  manualChecklistReplaced: string;
+  desiredTargetResidual: number;
+  projectedRiskReductionPts: number;
+  status: 'NOT_STARTED' | 'IN_PROGRESS' | 'VALIDATING' | 'REMEDIATED' | 'ACCEPTED_WITHIN_LIMITS';
+  kriId?: string;
+  quarterMilestone: string;
+  // WHO TDR Tool 1.13 Specific Template Fields
+  whoCategory?: WHORiskCategory;
+  whoRiskArea?: string;
+  specificConcern?: string;
+  probabilityRating?: 'L' | 'M' | 'H';
+  impactRating?: 'L' | 'M' | 'H';
+  detectabilityRating?: 'L' | 'M' | 'H';
+  contingencyPlan?: string;
+  nextReviewDate?: string;
+  // Council Risk Register & Treatment Plan Template Fields
+  refCode?: string;
+  rtpCategory?: string;
+  ismsClause?: string;
+  ciaAttributes?: string;
+  treatmentDecision?: 'TRT' | 'TOL' | 'TSF' | 'TMT' | 'TRT>TOL';
+  impactBefore?: number;
+  likelihoodBefore?: number;
+  preMitigationScore?: number;
+  mitigation1?: string;
+  mitigation2?: string;
+  mitigation3?: string;
+  postMitigationCurrent?: 'High' | 'Medium' | 'Low';
+  postMitigationPrevious?: 'High' | 'Medium' | 'Low' | 'NEW';
+  historicScores?: { cycle: string; score: 'High' | 'Medium' | 'Low' }[];
+  natureOfChange?: string;
+  isTop10?: boolean;
+}
+
+export interface CouncilRTPDocumentHeader {
+  documentRef: string;
+  versionTag: string;
+  issueDate: string;
+  classification: string;
+  executiveTitle: string;
+  reportTarget: string;
+  periodLabel: string;
+}
+
+export interface CouncilRTPRisk {
+  refCode: string;
+  category: string;
+  ismsClause?: string;
+  ciaAttributes?: string;
+  treatmentDecision?: 'TRT' | 'TOL' | 'TSF' | 'TMT' | 'TRT>TOL';
+  description: string;
+  riskOwner: string;
+  impactBefore: number;
+  likelihoodBefore: number;
+  preMitigationScore: number;
+  mitigation1: string;
+  mitigation2?: string;
+  mitigation3?: string;
+  postMitigationCurrent: 'High' | 'Medium' | 'Low';
+  postMitigationPrevious: 'High' | 'Medium' | 'Low' | 'NEW';
+  historicScores?: { cycle: string; score: 'High' | 'Medium' | 'Low' }[];
+  natureOfChange?: string;
+  isTop10?: boolean;
+  relatedControlId?: string;
+}
+
+export interface PriorityCriteriaConfig {
+  minResidualRiskScore: number; // e.g. 10.0 (Medium-High to High)
+  includeNeedsAttention: boolean;
+  includeCriticalDeficiencies: boolean;
+  maxCEFThreshold: number; // e.g. 0.70
+  targetProcessAppFilter: string;
+  prioritizeManualControls: boolean;
+}
+
+export interface AnnualRiskTracking {
+  baselineAnnualResidual: number;
+  targetAnnualResidual: number;
+  currentAnnualResidual: number;
+  desiredReductionPercent: number; // e.g. 40%
+  achievedReductionPercent: number;
+  productOwnerName: string;
+  reviewCycleYear: string;
+  milestones: RiskTreatmentMilestone[];
+}
+
+export interface RiskTreatmentPlan {
+  planId: string;
+  planName: string;
+  organizationSystem: string;
+  createdAt: string;
+  updatedAt: string;
+  priorityCriteria: PriorityCriteriaConfig;
+  annualTracking: AnnualRiskTracking;
+  items: RiskTreatmentItem[];
+  kris: KRIThresholdItem[];
+  approvalStatus: 'DRAFT' | 'PO_APPROVED' | 'CISO_SANCTIONED';
+  approvedBy?: string;
+  approvalDate?: string;
+  executiveNotes?: string;
+  whoDocumentHeader?: WHODocumentHeader;
+}
+
 export interface RemediationRoadmapItem {
   id: string;
   priority: 'P0_IMMEDIATE' | 'P1_HIGH' | 'P2_MEDIUM' | 'P3_LOW';
@@ -202,6 +386,8 @@ export interface RemediationRoadmapItem {
   status: 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'ACCEPTED_RISK';
 }
 
+export type AIRemediationItem = RemediationRoadmapItem;
+
 export interface AIRemediationPlan {
   engineUsed: string;
   modelVersion: string;
@@ -211,16 +397,50 @@ export interface AIRemediationPlan {
   roadmap: RemediationRoadmapItem[];
 }
 
+export interface RCSAAssessmentVersion {
+  id: string;
+  versionNumber: number;
+  versionTag: string; // e.g. "v1.0 (Baseline)", "v1.1 (Post-Remediation)", "v2.0 (Audit-Certified)"
+  timestamp: string;
+  author: string;
+  changeSummary: string;
+  domain: RCSADomainType;
+  isBaseline?: boolean;
+  metrics: {
+    inherentRisk: number;
+    residualRisk: number;
+    cefScore: number;
+    totalControls: number;
+    assessedControls: number;
+    criticalDeficiencies: number;
+    highDeficiencies: number;
+    auditStatus: string;
+  };
+  snapshot: {
+    assessmentName: string;
+    timestamp: string;
+    organizationProfile: OrganizationProfile;
+    controls: AssessedControl[];
+    auditSignoff: AuditSignoff;
+    aiRemediation?: AIRemediationPlan;
+    riskTreatmentPlan?: RiskTreatmentPlan;
+  };
+}
+
 export interface RCSAPayload {
   assessmentId: string;
   assessmentName: string;
   rcsaDomain: RCSADomainType;
   selectedDomains?: RiskDomain[];
   timestamp: string;
+  currentVersionNumber?: number;
+  currentVersionTag?: string;
+  versionHistory?: RCSAAssessmentVersion[]; // Version history tracker on the RCSA object
   organizationProfile: OrganizationProfile;
   controls: AssessedControl[];
   auditSignoff: AuditSignoff;
   aiRemediation?: AIRemediationPlan;
+  riskTreatmentPlan?: RiskTreatmentPlan;
 }
 
 export interface DomainRiskSummary {
@@ -241,18 +461,29 @@ export type AIMode =
   | 'gemini'
   | 'local_lmstudio'
   | 'local_ollama'
+  | 'local_unsloth'
   | 'local_anythingllm'
   | 'offline_expert';
 
 export interface AISettings {
   mode: AIMode;
+  // LM Studio
   lmStudioEndpoint: string;
   lmStudioModel: string;
+  // Ollama
   ollamaEndpoint: string;
   ollamaModel: string;
+  ollamaApiPath?: '/api' | '/v1';
+  // Unsloth (Unsloth Studio)
+  unslothEndpoint?: string;
+  unslothModel?: string;
+  // AnythingLLM
   anythingLlmEndpoint: string;
   anythingLlmModel: string;
   anythingLlmApiKey?: string;
+  // Delimitation & Failover
+  delimitGeminiKey?: boolean;
+  fallbackToLocalOnQuota?: boolean;
   isAirGappedMode: boolean;
 }
 
@@ -382,6 +613,58 @@ export interface AIWriteupResult {
   keyActionItems: string[];
 }
 
+export type AIMitigationStrategyType =
+  | 'ZERO_TRUST'
+  | 'AUTOMATED_INGESTION'
+  | 'KEY_MANAGEMENT'
+  | 'CONTINUOUS_AUDITING'
+  | 'ISOLATION_DEFENSE'
+  | 'DATA_PROTECTION'
+  | 'RESILIENCE'
+  | 'PRIVACY_ENGINEERING';
+
+export interface AIMitigationSuggestion {
+  id: string;
+  targetControlId: string;
+  controlTitle: string;
+  domain: RiskDomain;
+  strategyType: AIMitigationStrategyType;
+  title: string;
+  urgency: 'IMMEDIATE' | 'HIGH' | 'MEDIUM' | 'PROACTIVE_HARDENING';
+  inherentRisk: number;
+  currentResidualRisk: number;
+  projectedResidualRisk: number;
+  estimatedCEFImprovement: number;
+  vulnerabilityAddressed: string;
+  proactiveStrategy: string;
+  technicalImplementation: string;
+  configurationSnippet?: string;
+  compensatingSafeguard: string;
+  defenseMultiplier: string;
+  auditValidationMetric: string;
+  implementationCost: 'LOW (1-3 Days)' | 'MEDIUM (1-2 Weeks)' | 'HIGH (1-2 Months)';
+  status?: 'PROPOSED' | 'APPLIED' | 'DISMISSED';
+}
+
+export interface AIMitigationDomainResult {
+  engineUsed: string;
+  generatedTimestamp: string;
+  domain: RiskDomain | 'ALL';
+  sector: string;
+  domainExecutiveBrief: string;
+  threatContext: string;
+  overallMaturityScore: number; // 0 - 100
+  proactiveVsReactiveRatio: string;
+  totalSuggestions: number;
+  estimatedAggregateRiskReduction: number;
+  suggestions: AIMitigationSuggestion[];
+  frameworkMappings: {
+    nistSp80053: string[];
+    csaCcm: string[];
+    iso27001: string[];
+  };
+}
+
 export type MilestoneStatus =
   | 'COMPLETED'
   | 'IN_PROGRESS'
@@ -459,4 +742,36 @@ export interface RCSAVersionSnapshot {
     cef: number;
     status: string;
   }>;
+}
+
+export type ControlClassificationType = 'Preventive' | 'Detective' | 'Corrective' | 'Directive';
+
+export interface IntegratedRCSARiskCalculations {
+  likelihood: number;
+  impact: number;
+  inherent_risk_score: number;
+  inherent_risk_level: 'Low' | 'Medium' | 'High' | 'Critical';
+  control_effectiveness_weight: number;
+  projected_residual_risk_score: number;
+  residual_risk_level: 'Low' | 'Medium' | 'High' | 'Critical';
+}
+
+export interface IntegratedRCSAItem {
+  id: string;
+  original_chunk_text: string;
+  domain: string;
+  assessment_question: string;
+  control_type: ControlClassificationType;
+  risk_calculations: IntegratedRCSARiskCalculations;
+  mapping_tags: string[];
+}
+
+export interface RCSAIngestionResult {
+  source_upload_metadata: {
+    total_chunks_extracted: number;
+    primary_domains_identified: string[];
+    source_format?: string;
+    ingestion_timestamp?: string;
+  };
+  integrated_rcsa_items: IntegratedRCSAItem[];
 }

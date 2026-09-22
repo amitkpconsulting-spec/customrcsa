@@ -138,6 +138,40 @@ export function exportRCSAToExcel(payload: RCSAPayload): void {
     XLSX.utils.book_append_sheet(wb, wsRoadmap, 'Remediation Roadmap');
   }
 
+  // Sheet 4: Version History & Rollback Ledger
+  if (payload.versionHistory && payload.versionHistory.length > 0) {
+    const versionHeaders = [
+      'Version Tag',
+      'Version Number',
+      'Timestamp (ISO)',
+      'Author / Assessor',
+      'Residual Risk',
+      'CEF Maturity',
+      'Critical Deficiencies',
+      'High Deficiencies',
+      'Total Controls',
+      'Audit Status',
+      'Change Summary / Notes',
+    ];
+
+    const versionRows = payload.versionHistory.map((v) => [
+      v.versionTag,
+      v.versionNumber,
+      v.timestamp,
+      v.author,
+      v.metrics.residualRisk,
+      `${(v.metrics.cefScore * 100).toFixed(0)}%`,
+      v.metrics.criticalDeficiencies,
+      v.metrics.highDeficiencies,
+      v.metrics.totalControls,
+      v.metrics.auditStatus,
+      v.changeSummary,
+    ]);
+
+    const wsVersion = XLSX.utils.aoa_to_sheet([versionHeaders, ...versionRows]);
+    XLSX.utils.book_append_sheet(wb, wsVersion, 'Version History');
+  }
+
   // Write file
   const fileName = `${payload.assessmentId}_Custom_RCSA_Technoscope.xlsx`;
   XLSX.writeFile(wb, fileName);
@@ -154,6 +188,6 @@ export function exportRCSAToJSON(payload: RCSAPayload): void {
   URL.revokeObjectURL(url);
 }
 
-export function printAuditReport(): void {
+export function printAuditReport(_payload?: RCSAPayload): void {
   window.print();
 }

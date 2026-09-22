@@ -23,9 +23,10 @@ import {
   Info,
   Sparkles,
 } from 'lucide-react';
-import { SourceQuestionnaireItem, RCSAPayload } from '../types';
+import { SourceQuestionnaireItem, RCSAPayload, IntegratedRCSAItem } from '../types';
 import { CAIQ_SOURCE_QUESTIONNAIRE, CSA_CCM_DOMAINS } from '../data/caiqSourceQuestionnaire';
 import { NIST_CONTROLS_CATALOG } from '../data/nistControls';
+import { QuestionnaireIngestionModal } from './QuestionnaireIngestionModal';
 import * as XLSX from 'xlsx';
 
 interface SourceQuestionnaireViewProps {
@@ -43,6 +44,36 @@ export const SourceQuestionnaireView: React.FC<SourceQuestionnaireViewProps> = (
   const [selectedOwnership, setSelectedOwnership] = useState<string>('ALL');
   const [expandedQuestionId, setExpandedQuestionId] = useState<string | null>('IAM-13.1');
   const [showLiteOnly, setShowLiteOnly] = useState<boolean>(false);
+  const [isIngestionModalOpen, setIsIngestionModalOpen] = useState<boolean>(false);
+  const [customIngestedItems, setCustomIngestedItems] = useState<SourceQuestionnaireItem[]>([]);
+
+  const handleImportIngestedItems = (items: IntegratedRCSAItem[]) => {
+    const converted: SourceQuestionnaireItem[] = items.map((it) => ({
+      questionId: it.id,
+      questionText: it.assessment_question,
+      controlId: it.id,
+      controlTitle: `${it.domain} - ${it.control_type} Control`,
+      domainTitle: it.domain,
+      domainCode: it.domain.slice(0, 3).toUpperCase(),
+      controlSpecification: `Original Ingested Requirement: ${it.original_chunk_text}`,
+      caiqLite: true,
+      ssrmOwnership: 'Shared (Independent)',
+      cspImplementationGuidance: `Implement ${it.control_type.toLowerCase()} safeguards to achieve residual risk level ${it.risk_calculations.residual_risk_level} (Target Score: ${it.risk_calculations.projected_residual_risk_score}).`,
+      cscResponsibilitiesGuidance: `Continuous validation of control weight ${it.risk_calculations.control_effectiveness_weight}.`,
+      auditingGuidelines: [
+        `1. Review control effectiveness evidence matching ${it.control_type} safeguards.`,
+        `2. Validate risk mitigation against baseline inherent risk (${it.risk_calculations.inherent_risk_score}) down to residual (${it.risk_calculations.projected_residual_risk_score}).`,
+      ],
+      standardReferences: it.mapping_tags.map((tag) => ({
+        framework: 'Normalized Mapping',
+        referenceId: tag,
+      })),
+      publication: 'Custom Ingested RCSA Protocol',
+    }));
+
+    setCustomIngestedItems((prev) => [...converted, ...prev]);
+    setSelectedFramework('all');
+  };
 
   // Convert NIST Controls into SourceQuestionnaireItems for unified browsing
   const nistSourceQuestions: SourceQuestionnaireItem[] = useMemo(() => {
@@ -80,11 +111,11 @@ export const SourceQuestionnaireView: React.FC<SourceQuestionnaireViewProps> = (
   const filteredQuestions = useMemo(() => {
     let list: SourceQuestionnaireItem[] = [];
     if (selectedFramework === 'caiq') {
-      list = CAIQ_SOURCE_QUESTIONNAIRE;
+      list = [...customIngestedItems, ...CAIQ_SOURCE_QUESTIONNAIRE];
     } else if (selectedFramework === 'nist') {
-      list = nistSourceQuestions;
+      list = [...customIngestedItems, ...nistSourceQuestions];
     } else {
-      list = [...CAIQ_SOURCE_QUESTIONNAIRE, ...nistSourceQuestions];
+      list = [...customIngestedItems, ...CAIQ_SOURCE_QUESTIONNAIRE, ...nistSourceQuestions];
     }
 
     return list.filter((item) => {
@@ -346,8 +377,16 @@ export const SourceQuestionnaireView: React.FC<SourceQuestionnaireViewProps> = (
               </button>
 
               <button
+                onClick={() => setIsIngestionModalOpen(true)}
+                className="bg-[#f5ff00] text-black hover:bg-yellow-300 font-mono text-xs px-3 py-1.5 uppercase font-bold transition flex items-center gap-1.5 ml-auto"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>INGEST_CUSTOM_RCSA</span>
+              </button>
+
+              <button
                 onClick={handleExportQuestionsExcel}
-                className="bg-[#181818] text-[#cccccc] border border-[#333333] hover:border-[#f5ff00] hover:text-white font-mono text-xs px-3 py-1.5 uppercase transition flex items-center gap-1.5 ml-auto"
+                className="bg-[#181818] text-[#cccccc] border border-[#333333] hover:border-[#f5ff00] hover:text-white font-mono text-xs px-3 py-1.5 uppercase transition flex items-center gap-1.5"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
                 <span>EXPORT_XLSX</span>
@@ -456,6 +495,13 @@ export const SourceQuestionnaireView: React.FC<SourceQuestionnaireViewProps> = (
           </div>
         )}
       </section>
+
+      {/* RCSA Ingestion Pipeline Modal */}
+      <QuestionnaireIngestionModal
+        isOpen={isIngestionModalOpen}
+        onClose={() => setIsIngestionModalOpen(false)}
+        onImportItems={handleImportIngestedItems}
+      />
     </div>
   );
 };

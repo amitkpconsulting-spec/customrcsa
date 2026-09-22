@@ -84,11 +84,429 @@
 }
 
 @media print {
-  header, nav, aside, button, .no-print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm 14mm 14mm 14mm;
+  }
+
+  *, *::before, *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+    text-shadow: none !important;
+    box-shadow: none !important;
+  }
+
+  html, body {
+    background: #ffffff !important;
+    color: #09090b !important;
+    font-size: 10pt !important;
+    line-height: 1.4 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* 1. Hide interactive web chrome & controls during print */
+  header,
+  nav,
+  aside,
+  button,
+  input,
+  select,
+  textarea,
+  .no-print,
+  .recharts-tooltip-wrapper,
+  [role="tooltip"],
+  .sticky,
+  .fixed:not(.print-include) {
     display: none !important;
   }
-  body {
-    background: white !important;
-    color: black !important;
+
+  /* 2. Container Backgrounds, Surfaces & Borders */
+  .bg-black,
+  .bg-[#0c0c0c],
+  .bg-[#0e0e0e],
+  .bg-[#0f0f0f],
+  .bg-[#111111],
+  .bg-[#141414],
+  .bg-[#161616],
+  .bg-[#181818],
+  .bg-[#1a1a1a],
+  .bg-[#222222] {
+    background-color: #ffffff !important;
+    color: #09090b !important;
+  }
+
+  .industrial-cell,
+  .industrial-accent-box {
+    background-color: #f8fafc !important;
+    border-color: #cbd5e1 !important;
+  }
+
+  .border,
+  [class*="border-"],
+  .industrial-border,
+  .industrial-border-thick {
+    border-color: #e2e8f0 !important;
+  }
+
+  /* 3. Text Contrast & Colors */
+  .text-white,
+  .text-[#ffffff] {
+    color: #09090b !important;
+  }
+
+  .text-[#cccccc],
+  .text-[#aaaaaa],
+  .text-[#999999],
+  .text-[#888888],
+  .text-[#777777] {
+    color: #334155 !important;
+  }
+
+  .text-[#666666],
+  .text-[#555555],
+  .text-[#444444] {
+    color: #64748b !important;
+  }
+
+  .text-[#f5ff00] {
+    color: #854d0e !important;
+    font-weight: 700 !important;
+  }
+
+  .bg-[#f5ff00] {
+    background-color: #fef08a !important;
+    color: #713f12 !important;
+    border: 1px solid #ca8a04 !important;
+  }
+
+  /* 4. Chart Scaling & Visibility (MUI X Charts & Recharts: Radar, Bar, Area, Heatmap) */
+  .MuiCharts-root,
+  .recharts-responsive-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: 280px !important;
+    display: block !important;
+    overflow: visible !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .MuiCharts-root svg,
+  .recharts-wrapper svg,
+  .recharts-surface,
+  svg {
+    overflow: visible !important;
+    max-width: 100% !important;
+    display: block !important;
+    shape-rendering: geometricPrecision;
+    text-rendering: geometricPrecision;
+  }
+
+  /* MUI X Charts Print Overrides */
+  .MuiChartsAxis-line,
+  .MuiChartsAxis-tick {
+    stroke: #64748b !important;
+    stroke-width: 1px !important;
+  }
+
+  .MuiChartsAxis-tickLabel,
+  .MuiChartsAxis-label {
+    fill: #1e293b !important;
+    font-size: 9pt !important;
+    font-weight: 600 !important;
+    font-family: 'Space Mono', 'JetBrains Mono', monospace !important;
+  }
+
+  .MuiChartsGrid-line {
+    stroke: #e2e8f0 !important;
+    stroke-dasharray: 2 2 !important;
+    stroke-width: 1px !important;
+  }
+
+  .MuiChartsLegend-root text,
+  .MuiChartsLegend-label {
+    fill: #0f172a !important;
+    font-weight: 700 !important;
+    font-size: 9pt !important;
+    font-family: 'Space Mono', monospace !important;
+  }
+
+  .MuiChartsLegend-root {
+    page-break-inside: avoid !important;
+  }
+
+  /* Radar Chart Polygons & Area Fills */
+  .MuiRadar-root polygon,
+  .recharts-radar-polygon {
+    fill-opacity: 0.35 !important;
+    stroke-width: 2.5px !important;
+  }
+
+  /* Radar Chart Polar Grid Lines */
+  .recharts-polar-grid-concentric path,
+  .recharts-polar-grid-angle line,
+  .recharts-polar-grid line {
+    stroke: #cbd5e1 !important;
+    stroke-width: 1px !important;
+    stroke-dasharray: 2 2 !important;
+  }
+
+  /* Radar Chart Polar Axis Labels */
+  .recharts-polar-angle-axis text,
+  .recharts-polar-angle-axis-tick text {
+    fill: #0f172a !important;
+    font-size: 10px !important;
+    font-weight: 700 !important;
+    font-family: 'Space Mono', 'Courier New', monospace !important;
+  }
+
+  .recharts-polar-radius-axis text,
+  .recharts-polar-radius-axis-tick text {
+    fill: #475569 !important;
+    font-size: 8px !important;
+    font-weight: 600 !important;
+    font-family: 'Space Mono', monospace !important;
+  }
+
+  .recharts-polar-radius-axis line {
+    stroke: #94a3b8 !important;
+  }
+
+  /* Radar Chart Polygons & Area Fills */
+  .recharts-radar-polygon {
+    fill-opacity: 0.35 !important;
+    stroke-width: 2.5px !important;
+  }
+
+  /* Cartesian Grid & Axis Lines */
+  .recharts-cartesian-grid-horizontal line,
+  .recharts-cartesian-grid-vertical line {
+    stroke: #e2e8f0 !important;
+    stroke-dasharray: 3 3 !important;
+  }
+
+  .recharts-cartesian-axis-line,
+  .recharts-cartesian-axis-tick-line {
+    stroke: #94a3b8 !important;
+  }
+
+  .recharts-cartesian-axis-tick-value text,
+  .recharts-cartesian-axis text {
+    fill: #334155 !important;
+    font-size: 9px !important;
+    font-family: 'Space Mono', monospace !important;
+  }
+
+  /* Recharts Legend */
+  .recharts-legend-wrapper {
+    position: static !important;
+    margin-top: 10px !important;
+    width: 100% !important;
+    text-align: center !important;
+  }
+
+  .recharts-legend-item-text {
+    color: #0f172a !important;
+    font-weight: 600 !important;
+    font-size: 10px !important;
+  }
+
+  /* 5. 5x5 and 3x3 Heatmap Matrix Grid Integrity */
+  .grid-cols-5 {
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+    gap: 4px !important;
+    width: 100% !important;
+  }
+
+  .grid-cols-3 {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 4px !important;
+    width: 100% !important;
+  }
+
+  .grid-cols-4 {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+  }
+
+  .grid-cols-2 {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+  }
+
+  /* Heatmap Cells Color Intensity & Background Preservation */
+  .bg-rose-950\/30,
+  .bg-rose-950\/40,
+  .bg-rose-950\/50,
+  .bg-red-950\/40,
+  .bg-red-900\/30,
+  .border-rose-700,
+  .border-red-600 {
+    background-color: #fee2e2 !important;
+    border: 1.5px solid #ef4444 !important;
+    color: #991b1b !important;
+  }
+
+  .bg-amber-950\/30,
+  .bg-amber-950\/40,
+  .bg-orange-950\/40,
+  .border-amber-600,
+  .border-orange-600 {
+    background-color: #ffedd5 !important;
+    border: 1.5px solid #f97316 !important;
+    color: #9a3412 !important;
+  }
+
+  .bg-yellow-950\/30,
+  .bg-yellow-950\/40,
+  .border-yellow-600,
+  .border-yellow-500 {
+    background-color: #fef9c3 !important;
+    border: 1.5px solid #eab308 !important;
+    color: #854d0e !important;
+  }
+
+  .bg-emerald-950\/30,
+  .bg-emerald-950\/40,
+  .bg-green-950\/40,
+  .border-emerald-600,
+  .border-green-600 {
+    background-color: #dcfce7 !important;
+    border: 1.5px solid #22c55e !important;
+    color: #166534 !important;
+  }
+
+  .bg-purple-950\/30,
+  .bg-purple-950\/40,
+  .border-purple-600 {
+    background-color: #f3e8ff !important;
+    border: 1.5px solid #a855f7 !important;
+    color: #6b21a8 !important;
+  }
+
+  .bg-sky-950\/30,
+  .bg-sky-950\/40,
+  .border-sky-600,
+  .border-sky-500 {
+    background-color: #e0f2fe !important;
+    border: 1.5px solid #0284c7 !important;
+    color: #0369a1 !important;
+  }
+
+  /* Control ID Badges inside Matrix Cells */
+  .grid-cols-5 button span,
+  .grid-cols-3 button span {
+    color: inherit !important;
+  }
+
+  .grid-cols-5 .bg-black\/50,
+  .grid-cols-3 .bg-black\/50 {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    border: 1px solid #94a3b8 !important;
+  }
+
+  /* 6. High Density Data Tables */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  th, td {
+    padding: 6px 8px !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #09090b !important;
+  }
+
+  th {
+    background-color: #f1f5f9 !important;
+    font-weight: 700 !important;
+    color: #0f172a !important;
+  }
+
+  /* 7. Page Break Rules & Structure */
+  .page-break-before {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+
+  .page-break-after {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  .page-break-avoid,
+  .print-break-avoid,
+  .border.bg-\[\#141414\],
+  .border.bg-\[\#0c0c0c\],
+  .border.bg-\[\#0f0f0f\] {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* 8. Standalone RTP PDF Print Isolation */
+  body.printing-standalone-pdf {
+    background: #ffffff !important;
+  }
+
+  body.printing-standalone-pdf #root {
+    display: none !important;
+  }
+
+  body.printing-standalone-pdf .no-print-pdf {
+    display: none !important;
+  }
+
+  body.printing-standalone-pdf #standalone-rtp-pdf-modal-overlay {
+    position: static !important;
+    inset: auto !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    backdrop-filter: none !important;
+    overflow: visible !important;
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+  }
+
+  body.printing-standalone-pdf #standalone-rtp-pdf-document {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  .page-break-after-always {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  .page-break-inside-avoid {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
 }

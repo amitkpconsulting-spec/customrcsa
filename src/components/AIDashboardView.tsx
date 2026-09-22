@@ -3,6 +3,7 @@ import {
   Sparkles,
   TrendingUp,
   ShieldAlert,
+  ShieldCheck,
   FileText,
   Activity,
   Cpu,
@@ -15,6 +16,17 @@ import {
   Printer,
   Sliders,
   Radio,
+  Zap,
+  Terminal,
+  Layers,
+  Lock,
+  Download,
+  ExternalLink,
+  Code,
+  FileCode,
+  CheckSquare,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   RCSAPayload,
@@ -27,6 +39,10 @@ import {
   AIWriteupResult,
   AIRemediationPlan,
   RemediationRoadmapItem,
+  AIMitigationDomainResult,
+  AIMitigationSuggestion,
+  AIMitigationStrategyType,
+  RiskDomain,
 } from '../types';
 import {
   generateAISummary,
@@ -34,6 +50,7 @@ import {
   generateAIRiskRemediationSynthesis,
   generateAITrends,
   generateAIWriteup,
+  generateAIMitigationSuggestions,
   getAIEngineLabel,
 } from '../utils/aiDashboardEngine';
 import { SECTOR_PROFILES } from '../data/sectorProfiles';
@@ -48,6 +65,7 @@ interface AIDashboardViewProps {
 }
 
 type AITabType =
+  | 'mitigation_suggestions'
   | 'summary'
   | 'heatmap_prediction'
   | 'risk_remediation'
@@ -62,7 +80,7 @@ export const AIDashboardView: React.FC<AIDashboardViewProps> = ({
   onSelectControlForReview,
   onUpdateRemediationPlan,
 }) => {
-  const [activeTab, setActiveTab] = useState<AITabType>('summary');
+  const [activeTab, setActiveTab] = useState<AITabType>('mitigation_suggestions');
   const [isLoading, setIsLoading] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -72,6 +90,15 @@ export const AIDashboardView: React.FC<AIDashboardViewProps> = ({
   const [riskData, setRiskData] = useState<AIRiskRemediationSynthesis | null>(null);
   const [trendsData, setTrendsData] = useState<AITrendItem[]>([]);
   const [selectedScenario, setSelectedScenario] = useState('Current Operating Trajectory');
+
+  // Mitigation Suggestions State
+  const [mitigationData, setMitigationData] = useState<AIMitigationDomainResult | null>(null);
+  const [selectedMitigationDomain, setSelectedMitigationDomain] = useState<RiskDomain | 'ALL'>('ALL');
+  const [selectedMitigationStrategy, setSelectedMitigationStrategy] = useState<string>('ALL');
+  const [selectedUrgencyFilter, setSelectedUrgencyFilter] = useState<string>('ALL');
+  const [isGeneratingMitigations, setIsGeneratingMitigations] = useState<boolean>(false);
+  const [appliedMitigationIds, setAppliedMitigationIds] = useState<Set<string>>(new Set());
+  const [expandedSnippetId, setExpandedSnippetId] = useState<string | null>(null);
 
   // Writeups State
   const [selectedWriteupType, setSelectedWriteupType] = useState<AIWriteupType>('BOARD_MEMO');
@@ -85,28 +112,53 @@ export const AIDashboardView: React.FC<AIDashboardViewProps> = ({
   const sector =
     SECTOR_PROFILES[assessment.organizationProfile.sector] || SECTOR_PROFILES.Technology;
 
-  // Initial Load of AI Features
+  // Initial & Tab-switch Load of AI Features (on-demand per active tab to prevent concurrent API burst)
   useEffect(() => {
-    loadAllAIData();
-  }, [assessment.assessmentId, aiSettings.mode, aiSettings.isAirGappedMode]);
+    loadActiveTabData(activeTab);
+  }, [activeTab, assessment.assessmentId, aiSettings.mode, aiSettings.isAirGappedMode]);
 
-  const loadAllAIData = async () => {
+  const loadActiveTabData = async (tab: typeof activeTab) => {
+    // Only load if not already populated or if refreshing
     setIsLoading(true);
     try {
-      const [sum, heat, risk, trends, writeup] = await Promise.all([
-        generateAISummary(assessment, aiSettings),
-        generateAIHeatmapPrediction(assessment, aiSettings, selectedScenario),
-        generateAIRiskRemediationSynthesis(assessment, aiSettings),
-        generateAITrends(assessment, aiSettings),
-        generateAIWriteup(selectedWriteupType, assessment, aiSettings),
-      ]);
-      setSummaryData(sum);
-      setHeatmapData(heat);
-      setRiskData(risk);
-      setTrendsData(trends);
-      setWriteupResult(writeup);
+      if (tab === 'summary') {
+        if (!summaryData) {
+          const sum = await generateAISummary(assessment, aiSettings);
+          setSummaryData(sum);
+        }
+      } else if (tab === 'mitigation_suggestions') {
+        if (!mitigationData) {
+          const mitigations = await generateAIMitigationSuggestions(
+            assessment,
+            aiSettings,
+            selectedMitigationDomain,
+            selectedMitigationStrategy
+          );
+          setMitigationData(mitigations);
+        }
+      } else if (tab === 'heatmap_prediction') {
+        if (!heatmapData) {
+          const heat = await generateAIHeatmapPrediction(assessment, aiSettings, selectedScenario);
+          setHeatmapData(heat);
+        }
+      } else if (tab === 'risk_remediation') {
+        if (!riskData) {
+          const risk = await generateAIRiskRemediationSynthesis(assessment, aiSettings);
+          setRiskData(risk);
+        }
+      } else if (tab === 'latest_trends') {
+        if (!trendsData || trendsData.length === 0) {
+          const trends = await generateAITrends(assessment, aiSettings);
+          setTrendsData(trends);
+        }
+      } else if (tab === 'writeups') {
+        if (!writeupResult) {
+          const writeup = await generateAIWriteup(selectedWriteupType, assessment, aiSettings, customWriteupInstruction);
+          setWriteupResult(writeup);
+        }
+      }
     } catch (e) {
-      console.error('Error loading AI dashboard data:', e);
+      console.error('Error loading AI tab data:', e);
     } finally {
       setIsLoading(false);
     }
@@ -118,6 +170,8 @@ export const AIDashboardView: React.FC<AIDashboardViewProps> = ({
       if (activeTab === 'summary') {
         const sum = await generateAISummary(assessment, aiSettings);
         setSummaryData(sum);
+      } else if (activeTab === 'mitigation_suggestions') {
+        await handleGenerateMitigations();
       } else if (activeTab === 'heatmap_prediction') {
         const heat = await generateAIHeatmapPrediction(assessment, aiSettings, selectedScenario);
         setHeatmapData(heat);
@@ -135,6 +189,111 @@ export const AIDashboardView: React.FC<AIDashboardViewProps> = ({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleGenerateMitigations = async (
+    targetDomain: RiskDomain | 'ALL' = selectedMitigationDomain,
+    targetStrategy: string = selectedMitigationStrategy
+  ) => {
+    setIsGeneratingMitigations(true);
+    try {
+      const res = await generateAIMitigationSuggestions(
+        assessment,
+        aiSettings,
+        targetDomain,
+        targetStrategy
+      );
+      setMitigationData(res);
+    } catch (err) {
+      console.error('Error generating mitigation suggestions:', err);
+    } finally {
+      setIsGeneratingMitigations(false);
+    }
+  };
+
+  const handleDomainFilterChange = async (domain: RiskDomain | 'ALL') => {
+    setSelectedMitigationDomain(domain);
+    await handleGenerateMitigations(domain, selectedMitigationStrategy);
+  };
+
+  const handleApplySingleMitigation = (sug: AIMitigationSuggestion) => {
+    setAppliedMitigationIds((prev) => new Set([...prev, sug.id]));
+
+    if (onUpdateRemediationPlan) {
+      const newItem: RemediationRoadmapItem = {
+        id: `ROADMAP-MIT-${Date.now()}`,
+        priority: sug.urgency === 'IMMEDIATE' ? 'P0_IMMEDIATE' : sug.urgency === 'HIGH' ? 'P1_HIGH' : 'P2_MEDIUM',
+        targetControl: sug.targetControlId,
+        controlTitle: sug.controlTitle,
+        domain: sug.domain,
+        gapSummary: sug.vulnerabilityAddressed,
+        technicalRemediationAction: `${sug.title}: ${sug.technicalImplementation}`,
+        compensatingControl: sug.compensatingSafeguard,
+        estimatedResidualReduction: Number((sug.currentResidualRisk - sug.projectedResidualRisk).toFixed(1)),
+        implementationTimeline: sug.implementationCost,
+        validationCriteria: sug.auditValidationMetric,
+        status: 'OPEN',
+      };
+
+      const existingPlan = assessment.aiRemediation;
+      const plan: AIRemediationPlan = {
+        engineUsed: getAIEngineLabel(aiSettings),
+        modelVersion: 'gemini-proactive-v1',
+        generatedTimestamp: new Date().toISOString(),
+        roadmap: [newItem, ...(existingPlan?.roadmap || [])],
+        sectorNotes: existingPlan?.sectorNotes || `Mitigation applied from ${sug.domain} domain proactive recommendations.`,
+        executiveSummary: existingPlan?.executiveSummary || 'Proactive mitigation suggestions integrated directly into remediation roadmap.',
+      };
+
+      onUpdateRemediationPlan(plan);
+    }
+  };
+
+  const handleApplyAllMitigations = () => {
+    if (!mitigationData || !onUpdateRemediationPlan) return;
+
+    const newIds = new Set(appliedMitigationIds);
+    mitigationData.suggestions.forEach((s) => newIds.add(s.id));
+    setAppliedMitigationIds(newIds);
+
+    const roadmapItems: RemediationRoadmapItem[] = mitigationData.suggestions.map((sug, idx) => ({
+      id: `ROADMAP-PROACTIVE-${idx + 1}`,
+      priority: sug.urgency === 'IMMEDIATE' ? 'P0_IMMEDIATE' : sug.urgency === 'HIGH' ? 'P1_HIGH' : 'P2_MEDIUM',
+      targetControl: sug.targetControlId,
+      controlTitle: sug.controlTitle,
+      domain: sug.domain,
+      gapSummary: sug.vulnerabilityAddressed,
+      technicalRemediationAction: `[PROACTIVE ${sug.strategyType}] ${sug.title} - ${sug.technicalImplementation}`,
+      compensatingControl: sug.compensatingSafeguard,
+      estimatedResidualReduction: Number((sug.currentResidualRisk - sug.projectedResidualRisk).toFixed(1)),
+      implementationTimeline: sug.implementationCost,
+      validationCriteria: sug.auditValidationMetric,
+      status: 'OPEN',
+    }));
+
+    const plan: AIRemediationPlan = {
+      engineUsed: mitigationData.engineUsed,
+      modelVersion: 'gemini-3.7-flash-mitigation',
+      generatedTimestamp: new Date().toISOString(),
+      roadmap: roadmapItems,
+      sectorNotes: `Proactive mitigation recommendations applied for ${mitigationData.domain} domain across ${sector.name}.`,
+      executiveSummary: mitigationData.domainExecutiveBrief,
+    };
+
+    onUpdateRemediationPlan(plan);
+    onNavigateToStage('remediation');
+  };
+
+  const handleExportMitigations = () => {
+    if (!mitigationData) return;
+    const jsonStr = JSON.stringify(mitigationData, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `rcsa-proactive-mitigations-${mitigationData.domain.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleScenarioChange = async (scenario: string) => {
@@ -208,6 +367,12 @@ export const AIDashboardView: React.FC<AIDashboardViewProps> = ({
 
   const tabs: { id: AITabType; label: string; icon: React.ReactNode; badge?: string }[] = [
     {
+      id: 'mitigation_suggestions',
+      label: 'Mitigation Suggestions',
+      icon: <Zap className="w-3.5 h-3.5" />,
+      badge: 'Proactive AI',
+    },
+    {
       id: 'summary',
       label: 'Executive Summary',
       icon: <Sparkles className="w-3.5 h-3.5" />,
@@ -238,6 +403,52 @@ export const AIDashboardView: React.FC<AIDashboardViewProps> = ({
       badge: 'Memos',
     },
   ];
+
+  const getStrategyColorClass = (strategy: string) => {
+    switch (strategy) {
+      case 'ZERO_TRUST':
+        return 'bg-purple-950/70 text-purple-300 border-purple-700/60';
+      case 'DATA_PROTECTION':
+        return 'bg-blue-950/70 text-blue-300 border-blue-700/60';
+      case 'AUTOMATED_INGESTION':
+        return 'bg-amber-950/70 text-amber-300 border-amber-700/60';
+      case 'KEY_MANAGEMENT':
+        return 'bg-emerald-950/70 text-emerald-300 border-emerald-700/60';
+      case 'CONTINUOUS_AUDITING':
+        return 'bg-cyan-950/70 text-cyan-300 border-cyan-700/60';
+      case 'PRIVACY_ENGINEERING':
+        return 'bg-pink-950/70 text-pink-300 border-pink-700/60';
+      case 'RESILIENCE':
+        return 'bg-orange-950/70 text-orange-300 border-orange-700/60';
+      default:
+        return 'bg-[#222222] text-[#f5ff00] border-[#444444]';
+    }
+  };
+
+  const getUrgencyColorClass = (urgency: string) => {
+    switch (urgency) {
+      case 'IMMEDIATE':
+        return 'bg-rose-950/80 text-rose-300 border-rose-600';
+      case 'HIGH':
+        return 'bg-amber-950/80 text-amber-300 border-amber-600';
+      case 'MEDIUM':
+        return 'bg-blue-950/80 text-blue-300 border-blue-600';
+      case 'PROACTIVE_HARDENING':
+        return 'bg-emerald-950/80 text-emerald-300 border-emerald-600';
+      default:
+        return 'bg-[#222222] text-white border-[#444444]';
+    }
+  };
+
+  const filteredMitigations = (mitigationData?.suggestions || []).filter((item) => {
+    if (selectedMitigationStrategy !== 'ALL' && item.strategyType !== selectedMitigationStrategy) {
+      return false;
+    }
+    if (selectedUrgencyFilter !== 'ALL' && item.urgency !== selectedUrgencyFilter) {
+      return false;
+    }
+    return true;
+  });
 
   return (
     <div className="space-y-6 pb-20 text-white animate-fadeIn">
@@ -319,6 +530,508 @@ export const AIDashboardView: React.FC<AIDashboardViewProps> = ({
           );
         })}
       </div>
+
+      {/* ========================================================= */}
+      {/* TAB 0: PROACTIVE MITIGATION SUGGESTIONS (GEMINI AI)        */}
+      {/* ========================================================= */}
+      {activeTab === 'mitigation_suggestions' && (
+        <div className="space-y-6">
+          {/* Domain & Strategy Filter Ribbon */}
+          <div className="border border-[#262626] bg-[#141414] p-5 space-y-4 font-mono">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-[#262626]">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 bg-purple-950/80 text-purple-300 border border-purple-700 text-[10px] uppercase font-bold tracking-wider flex items-center gap-1">
+                    <Zap className="w-3 h-3 text-[#f5ff00]" />
+                    Gemini Proactive Defense Intelligence
+                  </span>
+                  <span className="text-[10px] text-[#888888]">
+                    Zero-Trust • Automated Guardrails • Cryptographic Hardening
+                  </span>
+                </div>
+                <h3 className="text-xl font-syne font-black uppercase text-white mt-1">
+                  Proactive Security Control Recommendations
+                </h3>
+              </div>
+
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <button
+                  onClick={() => handleGenerateMitigations()}
+                  disabled={isGeneratingMitigations}
+                  className="px-3.5 py-2 bg-[#f5ff00] text-black hover:bg-yellow-300 text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition"
+                >
+                  <Sparkles
+                    className={`w-3.5 h-3.5 text-black ${
+                      isGeneratingMitigations ? 'animate-spin' : ''
+                    }`}
+                  />
+                  <span>
+                    {isGeneratingMitigations ? 'Synthesizing with Gemini...' : 'Re-Run Domain Synthesis'}
+                  </span>
+                </button>
+
+                <button
+                  onClick={handleApplyAllMitigations}
+                  disabled={!mitigationData || mitigationData.suggestions.length === 0}
+                  className="px-3.5 py-2 border border-emerald-500 bg-emerald-950/40 text-emerald-300 hover:bg-emerald-900/60 text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition disabled:opacity-50"
+                >
+                  <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Apply All to Remediation</span>
+                </button>
+
+                <button
+                  onClick={handleExportMitigations}
+                  className="p-2 border border-[#333333] bg-[#1a1a1a] hover:text-white text-[#888888] hover:border-[#555555] transition"
+                  title="Export Mitigation Recommendations JSON"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Domain Selection Tabs */}
+            <div className="space-y-2">
+              <span className="text-[11px] uppercase tracking-wider text-[#888888] font-bold block">
+                Target Assessment Domain:
+              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                {(['ALL', 'Cybersecurity', 'Privacy', 'Information Security', 'Governance'] as (RiskDomain | 'ALL')[]).map(
+                  (dom) => {
+                    const count =
+                      dom === 'ALL'
+                        ? assessment.controls.length
+                        : assessment.controls.filter((c) => c.domain === dom).length;
+                    return (
+                      <button
+                        key={dom}
+                        onClick={() => handleDomainFilterChange(dom)}
+                        className={`px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider border transition flex items-center gap-2 ${
+                          selectedMitigationDomain === dom
+                            ? 'bg-[#f5ff00] text-black border-[#f5ff00]'
+                            : 'bg-black text-[#aaaaaa] border-[#333333] hover:border-[#666666] hover:text-white'
+                        }`}
+                      >
+                        <span>{dom === 'ALL' ? 'All Domains' : dom}</span>
+                        <span
+                          className={`text-[9px] px-1.5 py-0.2 ${
+                            selectedMitigationDomain === dom
+                              ? 'bg-black text-[#f5ff00]'
+                              : 'bg-[#1e1e1e] text-[#888888]'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  }
+                )}
+              </div>
+            </div>
+
+            {/* Strategy & Urgency Secondary Filters */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-2">
+              <div>
+                <label className="text-[10px] uppercase font-bold text-[#888888] block mb-1">
+                  Defense Strategy Filter:
+                </label>
+                <select
+                  value={selectedMitigationStrategy}
+                  onChange={(e) => setSelectedMitigationStrategy(e.target.value)}
+                  className="w-full px-2.5 py-1.5 bg-black border border-[#333333] text-xs text-white outline-none focus:border-[#f5ff00]"
+                >
+                  <option value="ALL">All Strategies (Zero Trust, Data, Resil, etc.)</option>
+                  <option value="ZERO_TRUST">Zero Trust IAM & Ephemeral Auth</option>
+                  <option value="DATA_PROTECTION">Data Protection & HSM Envelopes</option>
+                  <option value="AUTOMATED_INGESTION">Automated Posture & Drift Alerting</option>
+                  <option value="CONTINUOUS_AUDITING">Continuous WORM Audit Logging</option>
+                  <option value="PRIVACY_ENGINEERING">Privacy Engineering & DSAR Tokenization</option>
+                  <option value="RESILIENCE">Immutable Backup & Sandbox DR</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] uppercase font-bold text-[#888888] block mb-1">
+                  Urgency / Hardening Level:
+                </label>
+                <select
+                  value={selectedUrgencyFilter}
+                  onChange={(e) => setSelectedUrgencyFilter(e.target.value)}
+                  className="w-full px-2.5 py-1.5 bg-black border border-[#333333] text-xs text-white outline-none focus:border-[#f5ff00]"
+                >
+                  <option value="ALL">All Urgencies</option>
+                  <option value="IMMEDIATE">Immediate Hardening</option>
+                  <option value="HIGH">High Priority</option>
+                  <option value="MEDIUM">Medium Priority</option>
+                  <option value="PROACTIVE_HARDENING">Proactive Hardening Baseline</option>
+                </select>
+              </div>
+
+              <div className="flex items-end">
+                <div className="text-[11px] text-[#888888] flex items-center gap-1.5 p-2 bg-black border border-[#262626] w-full">
+                  <span className="text-[#f5ff00] font-bold">
+                    {filteredMitigations.length}
+                  </span>
+                  <span>proactive recommendations active in filter</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Domain Intelligence Executive Banner */}
+          {mitigationData && (
+            <div className="border border-[#333333] bg-[#141414] p-6 space-y-6 font-mono">
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                <div className="lg:col-span-2 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-[#f5ff00]">
+                      Domain CISO Defense Posture: {mitigationData.domain}
+                    </span>
+                  </div>
+                  <p className="text-sm font-sans text-white leading-relaxed font-medium">
+                    {mitigationData.domainExecutiveBrief}
+                  </p>
+                  <div className="p-3 bg-black border border-[#262626] text-xs space-y-1">
+                    <span className="text-[10px] uppercase font-bold text-rose-400 block">
+                      Active Threat Actor Vector Context:
+                    </span>
+                    <p className="text-[#aaaaaa] text-xs leading-relaxed">
+                      {mitigationData.threatContext}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 lg:col-span-2">
+                  <div className="p-4 bg-black border border-[#262626] space-y-1">
+                    <span className="text-[10px] uppercase tracking-wider text-[#888888] block">
+                      Domain Maturity Score
+                    </span>
+                    <div className="text-3xl font-syne font-black text-[#f5ff00]">
+                      {mitigationData.overallMaturityScore}
+                      <span className="text-xs font-mono text-[#888888]">/100</span>
+                    </div>
+                    <div className="text-[10px] text-[#888888]">
+                      Tier: {mitigationData.overallMaturityScore >= 80 ? 'Optimized' : 'Managed Hardening'}
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-black border border-[#262626] space-y-1">
+                    <span className="text-[10px] uppercase tracking-wider text-[#888888] block">
+                      Defense Posture Ratio
+                    </span>
+                    <div className="text-lg font-syne font-bold text-emerald-400">
+                      {mitigationData.proactiveVsReactiveRatio}
+                    </div>
+                    <div className="text-[10px] text-[#888888]">Proactive vs. Reactive Index</div>
+                  </div>
+
+                  <div className="p-4 bg-black border border-[#262626] space-y-1">
+                    <span className="text-[10px] uppercase tracking-wider text-[#888888] block">
+                      Projected Risk Drop
+                    </span>
+                    <div className="text-3xl font-syne font-black text-cyan-400">
+                      -{mitigationData.estimatedAggregateRiskReduction}%
+                    </div>
+                    <div className="text-[10px] text-[#888888]">Net Residual Risk Reduction</div>
+                  </div>
+
+                  <div className="p-4 bg-black border border-[#262626] space-y-1">
+                    <span className="text-[10px] uppercase tracking-wider text-[#888888] block">
+                      Framework Alignment
+                    </span>
+                    <div className="text-xs font-bold text-white">NIST SP 800-53 Rev. 5</div>
+                    <div className="text-[10px] text-[#888888]">CSA CCM v4.1.0 • ISO 27001</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Framework Mapping Badges */}
+              <div className="pt-4 border-t border-[#262626] flex items-center justify-between gap-4 flex-wrap text-xs">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] uppercase font-bold text-[#888888]">
+                    Covered Controls:
+                  </span>
+                  {mitigationData.frameworkMappings.nistSp80053.map((ctrl) => (
+                    <span
+                      key={ctrl}
+                      className="px-2 py-0.5 bg-black border border-[#333333] text-[10px] font-bold text-[#f5ff00]"
+                    >
+                      {ctrl}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="text-[10px] text-[#666666]">
+                  Generated via {mitigationData.engineUsed}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* List of Proactive Mitigation Cards */}
+          <div className="space-y-4">
+            {filteredMitigations.length === 0 ? (
+              <div className="border border-[#333333] bg-[#141414] p-12 text-center space-y-3 font-mono">
+                <ShieldCheck className="w-10 h-10 text-[#555555] mx-auto" />
+                <p className="text-sm text-[#aaaaaa]">
+                  No proactive mitigations match the selected domain and filter criteria.
+                </p>
+                <button
+                  onClick={() => {
+                    setSelectedMitigationDomain('ALL');
+                    setSelectedMitigationStrategy('ALL');
+                    setSelectedUrgencyFilter('ALL');
+                  }}
+                  className="px-4 py-2 bg-[#f5ff00] text-black text-xs font-bold uppercase tracking-wider"
+                >
+                  Reset Filters
+                </button>
+              </div>
+            ) : (
+              filteredMitigations.map((sug) => {
+                const isApplied = appliedMitigationIds.has(sug.id);
+                const isExpanded = expandedSnippetId === sug.id;
+                const riskDropPct = Math.round(
+                  ((sug.currentResidualRisk - sug.projectedResidualRisk) / (sug.currentResidualRisk || 1)) * 100
+                );
+
+                return (
+                  <div
+                    key={sug.id}
+                    className={`border transition-all duration-200 font-mono ${
+                      isApplied
+                        ? 'border-emerald-700/80 bg-[#101912]'
+                        : 'border-[#262626] bg-[#141414] hover:border-[#444444]'
+                    } p-6 space-y-5`}
+                  >
+                    {/* Header Row */}
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-[#262626] pb-4">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span
+                            className={`text-[9px] font-bold uppercase px-2 py-0.5 border ${getUrgencyColorClass(
+                              sug.urgency
+                            )}`}
+                          >
+                            {sug.urgency.replace('_', ' ')}
+                          </span>
+
+                          <span
+                            className={`text-[9px] font-bold uppercase px-2 py-0.5 border ${getStrategyColorClass(
+                              sug.strategyType
+                            )}`}
+                          >
+                            {sug.strategyType.replace('_', ' ')}
+                          </span>
+
+                          <button
+                            onClick={() => onSelectControlForReview(sug.targetControlId)}
+                            className="text-[10px] font-bold px-2 py-0.5 bg-black border border-[#333333] text-[#f5ff00] hover:border-[#f5ff00] flex items-center gap-1 transition"
+                            title="Inspect Control in RCSA Questionnaire"
+                          >
+                            <span>{sug.targetControlId}</span>
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </button>
+
+                          <span className="text-[10px] text-[#888888]">
+                            {sug.controlTitle} • <strong className="text-white">{sug.domain}</strong>
+                          </span>
+                        </div>
+
+                        <h4 className="text-lg sm:text-xl font-syne font-bold text-white leading-snug">
+                          {sug.title}
+                        </h4>
+                      </div>
+
+                      {/* Applied Status Badge */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {isApplied && (
+                          <span className="px-2.5 py-1 bg-emerald-950 border border-emerald-600 text-emerald-300 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5">
+                            <Check className="w-3 h-3 text-emerald-400" />
+                            Applied to Roadmap
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Risk Transformation Bar */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3.5 bg-black border border-[#262626]">
+                      <div>
+                        <span className="text-[9px] uppercase tracking-wider text-[#888888] block">
+                          Inherent Baseline
+                        </span>
+                        <div className="text-base font-bold text-[#f5ff00]">
+                          {sug.inherentRisk.toFixed(1)}
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-[9px] uppercase tracking-wider text-[#888888] block">
+                          Current Residual
+                        </span>
+                        <div className="text-base font-bold text-rose-400">
+                          {sug.currentResidualRisk.toFixed(1)}
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-[9px] uppercase tracking-wider text-[#888888] block">
+                          Projected Residual
+                        </span>
+                        <div className="text-base font-bold text-emerald-400 flex items-center gap-1">
+                          <span>{sug.projectedResidualRisk.toFixed(1)}</span>
+                          <span className="text-[10px] text-emerald-300">(-{riskDropPct}%)</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-[9px] uppercase tracking-wider text-[#888888] block">
+                          CEF Gain / Cost
+                        </span>
+                        <div className="text-xs font-bold text-cyan-300">
+                          +{sug.estimatedCEFImprovement.toFixed(2)} CEF • {sug.implementationCost}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Core Architectural Details */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+                      <div className="space-y-2">
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-rose-400 block mb-0.5">
+                            Deficiency / Vulnerability Addressed:
+                          </span>
+                          <p className="text-[#cccccc] text-[11px] leading-relaxed">
+                            {sug.vulnerabilityAddressed}
+                          </p>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-[#f5ff00] block mb-0.5">
+                            Proactive Architecture Strategy:
+                          </span>
+                          <p className="text-[#dddddd] text-[11px] leading-relaxed">
+                            {sug.proactiveStrategy}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-cyan-400 block mb-0.5">
+                            Technical Implementation & Guardrails:
+                          </span>
+                          <p className="text-[#cccccc] text-[11px] leading-relaxed">
+                            {sug.technicalImplementation}
+                          </p>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-emerald-400 block mb-0.5">
+                            Compensating Safeguard & Defense Multiplier:
+                          </span>
+                          <p className="text-[#aaaaaa] text-[11px] leading-relaxed">
+                            {sug.compensatingSafeguard} — <em className="text-white not-italic">{sug.defenseMultiplier}</em>
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Configuration / CLI Snippet Accordion */}
+                    {sug.configurationSnippet && (
+                      <div className="border border-[#262626] bg-black">
+                        <button
+                          onClick={() =>
+                            setExpandedSnippetId(isExpanded ? null : sug.id)
+                          }
+                          className="w-full px-3.5 py-2 flex items-center justify-between text-left text-xs font-mono text-[#888888] hover:text-white transition"
+                        >
+                          <span className="flex items-center gap-2 text-[11px] text-[#f5ff00] font-bold">
+                            <Terminal className="w-3.5 h-3.5" />
+                            Technical Configuration / Policy Snippet
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-[#666666]">
+                              {isExpanded ? 'Hide Code' : 'View Code'}
+                            </span>
+                            {isExpanded ? (
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            )}
+                          </div>
+                        </button>
+
+                        {isExpanded && (
+                          <div className="p-3.5 border-t border-[#262626] bg-[#0c0c0c] relative">
+                            <button
+                              onClick={() =>
+                                handleCopy(sug.configurationSnippet || '', `snippet_${sug.id}`)
+                              }
+                              className="absolute top-3 right-3 px-2 py-1 bg-[#1e1e1e] hover:bg-[#333333] text-[10px] font-bold text-white border border-[#444444] flex items-center gap-1"
+                            >
+                              {copiedKey === `snippet_${sug.id}` ? (
+                                <Check className="w-3 h-3 text-emerald-400" />
+                              ) : (
+                                <Copy className="w-3 h-3 text-[#f5ff00]" />
+                              )}
+                              <span>
+                                {copiedKey === `snippet_${sug.id}` ? 'Copied' : 'Copy'}
+                              </span>
+                            </button>
+                            <pre className="text-[11px] text-emerald-300 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed pr-16">
+                              {sug.configurationSnippet}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Audit Telemetry Proof & Actions Footer */}
+                    <div className="pt-3 border-t border-[#262626] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                      <div className="text-[11px] text-[#888888] flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[#666666]">Auditor Proof:</span>
+                        <span className="text-white font-medium">{sug.auditValidationMetric}</span>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={() =>
+                            handleCopy(
+                              `### Proactive Mitigation: ${sug.title}\n- Target Control: ${sug.targetControlId} (${sug.controlTitle})\n- Strategy: ${sug.strategyType}\n- Urgency: ${sug.urgency}\n- Risk Delta: ${sug.currentResidualRisk} -> ${sug.projectedResidualRisk}\n- Strategy: ${sug.proactiveStrategy}\n- Technical Implementation: ${sug.technicalImplementation}\n- Compensating Safeguard: ${sug.compensatingSafeguard}\n- Audit Metric: ${sug.auditValidationMetric}\n\nConfiguration:\n\`\`\`\n${sug.configurationSnippet || 'N/A'}\n\`\`\``,
+                              `spec_${sug.id}`
+                            )
+                          }
+                          className="px-2.5 py-1.5 bg-[#1a1a1a] hover:bg-[#262626] text-[#aaaaaa] hover:text-white border border-[#333333] text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition"
+                        >
+                          {copiedKey === `spec_${sug.id}` ? (
+                            <Check className="w-3 h-3 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3 h-3 text-[#888888]" />
+                          )}
+                          <span>{copiedKey === `spec_${sug.id}` ? 'Copied' : 'Copy Spec'}</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleApplySingleMitigation(sug)}
+                          disabled={isApplied}
+                          className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 transition ${
+                            isApplied
+                              ? 'bg-emerald-950 text-emerald-300 border border-emerald-700 opacity-60 cursor-default'
+                              : 'bg-[#f5ff00] text-black hover:bg-yellow-300'
+                          }`}
+                        >
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>{isApplied ? 'Applied' : 'Apply to Roadmap'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ========================================================= */}
       {/* TAB 1: AI EXECUTIVE SUMMARY                               */}
